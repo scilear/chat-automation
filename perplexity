@@ -289,10 +289,6 @@ class PerplexityCLI:
     async def chat_message(self, message: str, session_id: str = None):
         import json
         
-        print(f"{'='*70}")
-        print("PERPLEXITY")
-        print(f"{'='*70}\n")
-        
         persona_name, actual_message = parse_persona(message)
         persona_content = ""
         
@@ -349,10 +345,6 @@ class PerplexityCLI:
         if not os.path.exists(filepath):
             log(f"Error: File not found: {filepath}")
             return
-        
-        print(f"{'='*70}")
-        print("PERPLEXITY - FILE UPLOAD")
-        print(f"{'='*70}\n")
         
         self.chat = PerplexityManager()
         
@@ -465,6 +457,7 @@ Flags:
     chat_parser = subparsers.add_parser('chat', help='Send a message')
     chat_parser.add_argument('message', nargs='?', help='Message to send')
     chat_parser.add_argument('--file', '-f', help='File to upload')
+    chat_parser.add_argument('--prompt-file', '-p', help='Read prompt from file')
     chat_parser.add_argument('--session', '-s', help='Session ID to continue')
     
     list_parser = subparsers.add_parser('list', help='List saved conversations')
@@ -489,10 +482,14 @@ Flags:
     elif args.command == 'chat':
         if args.file:
             asyncio.run(cli.chat_file(args.file, args.message or "", args.session))
+        elif args.prompt_file:
+            with open(args.prompt_file, 'r') as f:
+                prompt = f.read().strip()
+            asyncio.run(cli.chat_message(prompt, args.session))
         elif args.message:
             asyncio.run(cli.chat_message(args.message, args.session))
         else:
-            print("Error: Provide a message or use --file")
+            print("Error: Provide a message, --prompt-file, or --file")
     elif args.command == 'list':
         asyncio.run(cli.list_conversations())
     elif args.command == 'personas':
