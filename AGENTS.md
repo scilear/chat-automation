@@ -1,5 +1,7 @@
 # Agent Guidelines - Chat Automation
 
+Browser automation framework for ChatGPT and other AI chat services with persistent sessions.
+
 ## Build / Test Commands
 
 ```bash
@@ -27,17 +29,32 @@ python -m py_compile chat_automation/*.py
 # Type checking (if mypy installed)
 python -m mypy chat_automation/
 
-# Run single test (if pytest installed)
+# Run single test
 python -m pytest examples/test_chatgpt.py -v
+```
+
+## Browser Daemon
+
+The daemon keeps the browser running for instant CLI connections:
+
+```bash
+# Start daemon (keeps browser open)
+python browser_daemon.py start
+
+# Check status
+python browser_daemon.py status
+
+# Stop daemon
+python browser_daemon.py stop
 ```
 
 ## Code Style Guidelines
 
 ### Imports
-Order imports in three groups separated by blank lines:
-1. Standard library (`import asyncio`, `from typing import Optional`)
-2. Third-party (`from playwright.async_api import async_api`)
-3. Local (`from .config import ChatAutomationConfig`)
+Order in three groups separated by blank lines:
+1. Standard library
+2. Third-party
+3. Local
 
 ```python
 import asyncio
@@ -53,7 +70,7 @@ from .config import ChatAutomationConfig
 ```
 
 ### Type Hints
-Use full type hints for function signatures. Prefer specific types over `Any`.
+Use full type hints for function signatures:
 
 ```python
 async def send_message(self, message: str, wait_for_response: bool = True) -> str:
@@ -62,7 +79,6 @@ async def send_message(self, message: str, wait_for_response: bool = True) -> st
 def get_history(self) -> List[Dict[str, Any]]:
     ...
 
-# Optional for nullable returns
 async def find_textarea(self) -> Optional[PageElement]:
     ...
 ```
@@ -70,14 +86,14 @@ async def find_textarea(self) -> Optional[PageElement]:
 ### Naming Conventions
 - **Classes**: `PascalCase` (`ChatManager`, `ChatGPTAutomation`)
 - **Functions/Variables**: `snake_case` (`send_message`, `user_data_dir`)
-- **Constants**: `UPPER_SNAKE_CASE` or simple `snake_case` (`DEFAULT_CONFIG`)
+- **Constants**: `UPPER_SNAKE_CASE` or `snake_case` (`DEFAULT_CONFIG`)
 - **Private methods**: Leading underscore (`_ensure_browser`, `_is_browser_alive`)
-- **Dataclass fields**: `snake_case` (`role`, `content`, `timestamp`)
 
 ### Formatting
 - Line length: ~100 characters (practical, not strict)
 - Indentation: 4 spaces
-- Use dataclasses for structured data:
+
+### Dataclasses for Structured Data
 
 ```python
 @dataclass
@@ -98,28 +114,30 @@ class Conversation:
 
 ### Async/Await Patterns
 - Async for all I/O and browser operations
-- Provide sync wrapper for convenience (`SyncChatManager`)
+- Provide sync wrapper (`SyncChatManager`) for convenience
 - Use context managers for cleanup:
 
 ```python
 async with ChatManager() as chat:
     response = await chat.send("Hello")
 
-# Or sync version
 with SyncChatManager() as chat:
     response = chat.send("Hello")
 ```
 
 ### Error Handling
-- Use broad `try/except Exception` with meaningful error messages
-- Print errors to stdout, return error strings or `False`/`None`
-- Implement retry logic for transient failures:
+Use broad `try/except Exception` with meaningful messages. Return error strings or `False`/`None`:
 
 ```python
 async def send_message(self, message: str, max_retries: int = 3) -> bool:
     for attempt in range(max_retries):
         try:
-            # ... operation
+            element = await self.find_textarea()
+            if not element:
+                print(f"Attempt {attempt + 1}: Could not find chat input!")
+                await asyncio.sleep(2)
+                continue
+            await element.fill(message)
             return True
         except Exception as e:
             print(f"Attempt {attempt + 1} error: {e}")
@@ -129,7 +147,8 @@ async def send_message(self, message: str, max_retries: int = 3) -> bool:
 ```
 
 ### Browser Automation Patterns
-- Multiple fallback selectors for UI elements:
+
+Multiple fallback selectors for UI elements:
 
 ```python
 selectors = [
@@ -144,7 +163,7 @@ for selector in selectors:
         return element
 ```
 
-- Health checks for browser state:
+Health checks for browser state:
 
 ```python
 async def _is_browser_alive(self) -> bool:
@@ -156,31 +175,8 @@ async def _is_browser_alive(self) -> bool:
         return False
 ```
 
-### File Structure
-```
-chat_automation/
-├── __init__.py              # Public API exports
-├── base.py                  # Base BrowserAutomation class
-├── chatgpt.py               # ChatGPT-specific implementation
-├── manager.py               # ChatManager, SyncChatManager
-├── config.py                # Configuration dataclasses
-├── conversation.py          # Conversation management
-└── examples/                # Usage examples
-```
-
-### Module Docstrings
-Each module should have a docstring at the top:
-
-```python
-"""
-ChatGPT-specific automation module.
-
-Provides async browser automation for ChatGPT web interface.
-"""
-```
-
 ### Configuration
-Use dataclass builders for configuration:
+Use dataclass factory methods:
 
 ```python
 @dataclass
@@ -201,20 +197,44 @@ class ChatAutomationConfig:
         )
 ```
 
-## Quick Reference
+## File Structure
+
+```
+chat_automation/
+├── __init__.py              # Public API exports
+├── base.py                  # Base BrowserAutomation class (CDP support)
+├── chatgpt.py               # ChatGPT-specific implementation
+├── manager.py               # ChatManager, SyncChatManager
+├── config.py                # Configuration dataclasses
+├── conversation.py          # Conversation management
+├── browser_daemon.py        # Background browser daemon
+└── examples/                # Usage examples
+```
+
+## API Overview
 
 ```python
-# Async
+# Async - high level
 chat = ChatManager()
 response = await chat.send("Hello")
 await chat.close()
 
-# Sync
+# Sync - simpler API
 with SyncChatManager() as chat:
     response = chat.send("Hello")
 
-# Low-level
+# Low-level - direct browser control
 config = ChatAutomationConfig.brave_automation()
 async with ChatGPTAutomation(config) as chatgpt:
     await chatgpt.goto("https://chatgpt.com")
+    response = await chatgpt.chat("Hello")
 ```
+
+## Key Paths
+
+| Path | Purpose |
+|------|---------|
+| `~/.config/BraveSoftware/Brave-Automation/` | Persistent browser profile |
+| `~/.chat_automation/conversations/` | Saved conversation JSON files |
+| `~/.chat_automation/browser_cdp.json` | CDP endpoint for reconnection |
+| `~/.chat_automation/browser_daemon.pid` | Daemon process ID |

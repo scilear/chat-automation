@@ -24,6 +24,46 @@ from chat_automation import ChatManager, SyncChatManager
 SAVE_DIR = Path.home() / ".chat_automation" / "conversations"
 SAVE_DIR.mkdir(parents=True, exist_ok=True)
 
+PERSONAS_DIR = Path(__file__).parent / "personas"
+
+
+def parse_persona(message: str) -> tuple[str, str]:
+    """Extract persona name from message if present (/persona_name syntax)
+    
+    Returns: (persona_name or "", remaining_message)
+    """
+    if message.startswith("/"):
+        parts = message.split(None, 1)
+        if len(parts) >= 1:
+            persona_name = parts[0][1:]  # Remove leading /
+            remaining = parts[1] if len(parts) > 1 else ""
+            return persona_name, remaining
+    return "", message
+
+
+def load_persona(persona_name: str) -> str:
+    """Load persona content from personas/{persona_name}.md"""
+    if not persona_name:
+        return ""
+    persona_file = PERSONAS_DIR / f"{persona_name}.md"
+    if persona_file.exists():
+        return persona_file.read_text().strip()
+    return ""
+
+
+def list_personas() -> list[dict]:
+    """List all available personas"""
+    personas = []
+    if PERSONAS_DIR.exists():
+        for f in PERSONAS_DIR.glob("*.md"):
+            content = f.read_text().strip()
+            first_line = content.split("\n")[0][:60]
+            personas.append({
+                "name": f.stem,
+                "preview": first_line + "..." if len(first_line) == 60 else first_line
+            })
+    return sorted(personas, key=lambda x: x["name"])
+
 class ChatGPTCLI:
     def __init__(self):
         self.chat = None
@@ -71,11 +111,20 @@ class ChatGPTCLI:
         print("CHATGPT")
         print(f"{'='*70}\n")
         
+        persona_name, actual_message = parse_persona(message)
+        persona_content = ""
+        
+        if persona_name:
+            persona_content = load_persona(persona_name)
+            if persona_content:
+                print(f"[Persona: {persona_name}]\n")
+            else:
+                print(f"[Warning: Persona '{persona_name}' not found]\n")
+        
         self.chat = ChatManager()
         
         try:
             if session_id:
-                # Continue existing conversation
                 conv_file = SAVE_DIR / f"{session_id}.json"
                 if conv_file.exists():
                     await self.chat.load_conversation(str(conv_file))
@@ -83,13 +132,16 @@ class ChatGPTCLI:
                     print(f"Session not found: {session_id}")
                     self.chat.start_conversation()
             else:
-                # New conversation
                 self.chat.start_conversation()
             
-            print(f"You: {message}\n")
+            full_message = actual_message
+            if persona_content:
+                full_message = f"{persona_content}\n\n{actual_message}"
+            
+            print(f"You: {actual_message}\n")
             print("Waiting for response...")
             
-            response = await self.chat.send(message)
+            response = await self.chat.send(full_message)
             
             print(f"ChatGPT: {response}\n")
             
@@ -217,7 +269,6 @@ class ChatGPTCLI:
                 content = msg['content'][:200] + "..." if len(msg['content']) > 200 else msg['content']
                 print(f"{role}: {content}\n")
         else:
-            # Show most recent
             conversations = list(SAVE_DIR.glob("*.json"))
             if not conversations:
                 print("No conversations found.")
@@ -232,10 +283,29 @@ class ChatGPTCLI:
             print(f"ID: {data.get('id')}")
             print(f"Messages: {len(data.get('messages', []))}\n")
             
-            for msg in data.get('messages', [])[-5:]:  # Last 5
+            for msg in data.get('messages', [])[-5:]:
                 role = "You" if msg['role'] == 'user' else "ChatGPT"
                 content = msg['content'][:150] + "..." if len(msg['content']) > 150 else msg['content']
                 print(f"{role}: {content}\n")
+    
+    def list_personas(self):
+        """List available personas"""
+        print(f"{'='*70}")
+        print("AVAILABLE PERSONAS")
+        print(f"{'='*70}\n")
+        
+        personas = list_personas()
+        
+        if not personas:
+            print("No personas found in personas/ directory")
+            print(f"\nCreate one: echo 'Your prompt' > {PERSONAS_DIR}/myrole.md")
+            return
+        
+        for p in personas:
+            print(f"/{p['name']}")
+            print(f"   {p['preview']}\n")
+        
+        print("Usage: chatgpt chat /analyst \"your question\"")
 
 def main():
     parser = argparse.ArgumentParser(
@@ -245,7 +315,9 @@ def main():
 Examples:
   chatgpt login                              # Login to ChatGPT
   chatgpt chat "Explain Python decorators"   # Send a message
+  chatgpt chat /analyst "Review this plan"   # Use persona
   chatgpt chat --file script.py              # Upload a file
+  chatgpt personas                           # List available personas
   chatgpt list                               # List conversations
   chatgpt history                            # Show recent history
   chatgpt continue conv_2024_02_10           # Continue a conversation
@@ -265,6 +337,9 @@ Examples:
     
     # List
     list_parser = subparsers.add_parser('list', help='List saved conversations')
+    
+    # Personas
+    personas_parser = subparsers.add_parser('personas', help='List available personas')
     
     # History
     history_parser = subparsers.add_parser('history', help='Show conversation history')
@@ -294,6 +369,8 @@ Examples:
             print("Error: Provide a message or use --file")
     elif args.command == 'list':
         asyncio.run(cli.list_conversations())
+    elif args.command == 'personas':
+        cli.list_personas()
     elif args.command == 'history':
         asyncio.run(cli.show_history(args.session))
     elif args.command == 'continue':

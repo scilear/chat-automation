@@ -23,6 +23,43 @@ from chat_automation.config import ChatAutomationConfig
 SAVE_DIR = Path.home() / ".chat_automation" / "perplexity_conversations"
 SAVE_DIR.mkdir(parents=True, exist_ok=True)
 
+PERSONAS_DIR = Path(__file__).parent / "personas"
+
+
+def parse_persona(message: str) -> tuple[str, str]:
+    """Extract persona name from message if present (/persona_name syntax)"""
+    if message.startswith("/"):
+        parts = message.split(None, 1)
+        if len(parts) >= 1:
+            persona_name = parts[0][1:]
+            remaining = parts[1] if len(parts) > 1 else ""
+            return persona_name, remaining
+    return "", message
+
+
+def load_persona(persona_name: str) -> str:
+    """Load persona content from personas/{persona_name}.md"""
+    if not persona_name:
+        return ""
+    persona_file = PERSONAS_DIR / f"{persona_name}.md"
+    if persona_file.exists():
+        return persona_file.read_text().strip()
+    return ""
+
+
+def list_personas() -> list[dict]:
+    """List all available personas"""
+    personas = []
+    if PERSONAS_DIR.exists():
+        for f in PERSONAS_DIR.glob("*.md"):
+            content = f.read_text().strip()
+            first_line = content.split("\n")[0][:60]
+            personas.append({
+                "name": f.stem,
+                "preview": first_line + "..." if len(first_line) == 60 else first_line
+            })
+    return sorted(personas, key=lambda x: x["name"])
+
 
 class PerplexityManager:
     """Manages persistent Perplexity browser sessions - mirrors ChatManager pattern"""
@@ -224,6 +261,16 @@ class PerplexityCLI:
         print("PERPLEXITY")
         print(f"{'='*70}\n")
         
+        persona_name, actual_message = parse_persona(message)
+        persona_content = ""
+        
+        if persona_name:
+            persona_content = load_persona(persona_name)
+            if persona_content:
+                print(f"[Persona: {persona_name}]\n")
+            else:
+                print(f"[Warning: Persona '{persona_name}' not found]\n")
+        
         self.chat = PerplexityManager()
         
         try:
@@ -237,10 +284,14 @@ class PerplexityCLI:
             else:
                 self.chat.start_conversation()
             
-            print(f"You: {message}\n")
+            full_message = actual_message
+            if persona_content:
+                full_message = f"{persona_content}\n\n{actual_message}"
+            
+            print(f"You: {actual_message}\n")
             print("Waiting for response...")
             
-            response = await self.chat.send(message)
+            response = await self.chat.send(full_message)
             
             print(f"Perplexity: {response}\n")
             
@@ -330,6 +381,24 @@ class PerplexityCLI:
         
         if len(conversations) > 10:
             print(f"... and {len(conversations) - 10} more")
+    
+    def list_personas(self):
+        """List available personas"""
+        print(f"{'='*70}")
+        print("AVAILABLE PERSONAS")
+        print(f"{'='*70}\n")
+        
+        personas = list_personas()
+        
+        if not personas:
+            print("No personas found in personas/ directory")
+            return
+        
+        for p in personas:
+            print(f"/{p['name']}")
+            print(f"   {p['preview']}\n")
+        
+        print("Usage: perplexity chat /analyst \"your question\"")
 
 
 def main():
@@ -340,7 +409,9 @@ def main():
 Examples:
   perplexity login                              # Login to Perplexity
   perplexity chat "Explain Python decorators"   # Send a message
+  perplexity chat /analyst "Review this plan"   # Use persona
   perplexity chat --file script.py              # Upload a file
+  perplexity personas                           # List available personas
   perplexity list                               # List conversations
   perplexity continue perp_2024_02_10           # Continue a conversation
         """
@@ -356,6 +427,8 @@ Examples:
     chat_parser.add_argument('--session', '-s', help='Session ID to continue')
     
     list_parser = subparsers.add_parser('list', help='List saved conversations')
+    
+    personas_parser = subparsers.add_parser('personas', help='List available personas')
     
     continue_parser = subparsers.add_parser('continue', help='Continue a conversation')
     continue_parser.add_argument('session_id', help='Session ID to continue')
@@ -380,6 +453,8 @@ Examples:
             print("Error: Provide a message or use --file")
     elif args.command == 'list':
         asyncio.run(cli.list_conversations())
+    elif args.command == 'personas':
+        cli.list_personas()
     elif args.command == 'continue':
         if args.message:
             asyncio.run(cli.chat_message(args.message, args.session_id))
