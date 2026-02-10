@@ -11,8 +11,8 @@ from typing import Optional, List, Dict, Any
 from abc import ABC, abstractmethod
 
 from .config import ChatAutomationConfig
+from .verbose import log
 
-# CDP state file
 CDP_STATE_FILE = Path.home() / ".chat_automation" / "browser_cdp.json"
 
 class BrowserAutomation(ABC):
@@ -52,37 +52,32 @@ class BrowserAutomation(ABC):
         """Start browser - try CDP first, then launch new"""
         self.playwright = await async_playwright().start()
 
-        # Try to connect to daemon via CDP
         cdp_port = 9222
         cdp_url = f"http://127.0.0.1:{cdp_port}"
         
         try:
-            print("Connecting to browser daemon...")
+            log("Connecting to browser daemon...")
             self.browser = await self.playwright.chromium.connect_over_cdp(cdp_url)
             
-            # Get existing context or create new
             if self.browser.contexts:
                 self.context = self.browser.contexts[0]
             else:
                 self.context = await self.browser.new_context()
             
-            # Get existing page or create new
             if self.context.pages:
                 self.page = self.context.pages[0]
             else:
                 self.page = await self.context.new_page()
             
-            print("✓ Connected to daemon")
+            log("Connected to daemon")
             return
         except Exception as e:
-            print(f"✗ Daemon not running: {e}")
-            print("\nPlease start the daemon first:")
-            print("  ./chatgpt-daemon start")
+            log(f"Daemon not running: {e}")
             raise RuntimeError("Browser daemon not running. Start it with: ./chatgpt-daemon start")
 
     async def _launch_new_browser(self) -> None:
         """Launch new browser with CDP enabled"""
-        print("Starting new browser...")
+        log("Starting new browser...")
 
         Brave_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
@@ -148,7 +143,7 @@ class BrowserAutomation(ABC):
             self.page.set_default_timeout(self.config.timeout)
             self._setup_page_handlers()
         
-        print(f"✓ Browser started with CDP on port {CDP_PORT}")
+        log(f"Browser started with CDP on port {CDP_PORT}")
 
     def _setup_page_handlers(self):
         """Setup automatic handlers for common page events"""
@@ -169,7 +164,7 @@ class BrowserAutomation(ABC):
         """Actually close the browser and clear CDP endpoint"""
         await self.stop()
         self._clear_cdp_endpoint()
-        print("Browser closed")
+        log("Browser closed")
 
     async def goto(self, url: str) -> None:
         """Navigate to URL"""

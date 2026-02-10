@@ -8,6 +8,7 @@ from datetime import datetime
 
 from .base import BrowserAutomation
 from .config import ChatAutomationConfig
+from .verbose import log
 
 
 class ChatGPTAutomation(BrowserAutomation):
@@ -113,7 +114,7 @@ class ChatGPTAutomation(BrowserAutomation):
                 await new_chat_btn.click()
                 await asyncio.sleep(1)
         except Exception as e:
-            print(f"New chat button not found: {e}")
+            log(f"New chat button not found: {e}")
 
     async def send_message(self, message: str, max_retries: int = 3) -> bool:
         """Send a message to ChatGPT"""
@@ -122,7 +123,7 @@ class ChatGPTAutomation(BrowserAutomation):
                 # Find the input element
                 element = await self.find_textarea()
                 if not element:
-                    print(f"Attempt {attempt + 1}: Could not find chat input!")
+                    log(f"Attempt {attempt + 1}: Could not find chat input!")
                     await asyncio.sleep(2)
                     continue
 
@@ -137,7 +138,7 @@ class ChatGPTAutomation(BrowserAutomation):
                 for selector in selectors:
                     try:
                         await self.page.fill(selector, message, timeout=5000)
-                        print(f"Filled input via page.fill(): {message}")
+                        log(f"Filled input via page.fill(): {message}")
                         fill_success = True
                         break
                     except Exception as fill_err:
@@ -146,7 +147,7 @@ class ChatGPTAutomation(BrowserAutomation):
                 if not fill_success:
                     # Fallback to element-level fill
                     await element.fill(message)
-                    print(f"Filled input via element.fill(): {message}")
+                    log(f"Filled input via element.fill(): {message}")
                 
                 await asyncio.sleep(0.5)
 
@@ -155,28 +156,28 @@ class ChatGPTAutomation(BrowserAutomation):
                 if send_btn:
                     try:
                         await send_btn.click()
-                        print(f"Sent message via button: {message}")
+                        log(f"Sent message via button: {message}")
                         return True
                     except Exception as click_err:
-                        print(f"Button click failed: {click_err}, trying Enter key...")
+                        log(f"Button click failed: {click_err}, trying Enter key...")
                         # Fallback to Enter key
                         await element.press("Enter")
-                        print(f"Sent message via Enter: {message}")
+                        log(f"Sent message via Enter: {message}")
                         return True
                 else:
                     # No button found, try Enter key
-                    print(f"Send button not found, using Enter key...")
+                    log(f"Send button not found, using Enter key...")
                     await element.press("Enter")
-                    print(f"Sent message via Enter: {message}")
+                    log(f"Sent message via Enter: {message}")
                     return True
 
             except Exception as e:
-                print(f"Attempt {attempt + 1} error sending message: {e}")
+                log(f"Attempt {attempt + 1} error sending message: {e}")
                 if attempt < max_retries - 1:
                     await asyncio.sleep(3)
                 continue
 
-        print("Failed to send message after all retries")
+        log("Failed to send message after all retries")
         return False
 
     async def attach_file(self, filepath: str, message: str = "") -> bool:
@@ -211,12 +212,12 @@ class ChatGPTAutomation(BrowserAutomation):
                     continue
             
             if not attach_btn:
-                print("Attach file button not found, trying file input directly...")
+                log("Attach file button not found, trying file input directly...")
                 # Try to find file input directly
                 file_input = await self.page.query_selector('input[type="file"]')
                 if file_input:
                     await file_input.set_input_files(filepath)
-                    print(f"Attached file: {filepath}")
+                    log(f"Attached file: {filepath}")
                     
                     # Wait a moment for upload
                     await asyncio.sleep(2)
@@ -229,22 +230,22 @@ class ChatGPTAutomation(BrowserAutomation):
                         send_btn = await self.find_send_button()
                         if send_btn:
                             await send_btn.click()
-                            print("Sent file")
+                            log("Sent file")
                     return True
                 else:
-                    print("No file input found")
+                    log("No file input found")
                     return False
             
             # Click attach button
             await attach_btn.click()
-            print("Clicked attach button")
+            log("Clicked attach button")
             await asyncio.sleep(1)
             
             # Find file input that should now be visible
             file_input = await self.page.query_selector('input[type="file"]')
             if file_input:
                 await file_input.set_input_files(filepath)
-                print(f"Attached file: {filepath}")
+                log(f"Attached file: {filepath}")
                 
                 # Wait for upload
                 await asyncio.sleep(2)
@@ -257,15 +258,15 @@ class ChatGPTAutomation(BrowserAutomation):
                     send_btn = await self.find_send_button()
                     if send_btn:
                         await send_btn.click()
-                        print("Sent file")
+                        log("Sent file")
                 
                 return True
             else:
-                print("File input not found after clicking attach")
+                log("File input not found after clicking attach")
                 return False
                 
         except Exception as e:
-            print(f"Error attaching file: {e}")
+            log(f"Error attaching file: {e}")
             return False
 
     async def wait_for_response(self, timeout: int = 120000) -> bool:
@@ -286,7 +287,7 @@ class ChatGPTAutomation(BrowserAutomation):
 
             return False
         except Exception as e:
-            print(f"Error waiting for response: {e}")
+            log(f"Error waiting for response: {e}")
             return False
 
     async def get_last_response(self) -> str:
@@ -302,7 +303,7 @@ class ChatGPTAutomation(BrowserAutomation):
                 text = await last.text_content()
                 return text or ""
         except Exception as e:
-            print(f"Error getting response: {e}")
+            log(f"Error getting response: {e}")
         return ""
 
     async def get_conversation_history(self) -> List[Dict[str, str]]:
@@ -319,7 +320,7 @@ class ChatGPTAutomation(BrowserAutomation):
                 if assistant_text:
                     messages.append({"role": "assistant", "content": assistant_text})
         except Exception as e:
-            print(f"Error getting history: {e}")
+            log(f"Error getting history: {e}")
         return messages
 
     async def list_conversations(self, limit: int = 20) -> List[Dict[str, Any]]:
@@ -344,9 +345,9 @@ class ChatGPTAutomation(BrowserAutomation):
                         "element": item
                     })
                 except Exception as e:
-                    print(f"Error parsing conversation item: {e}")
+                    log(f"Error parsing conversation item: {e}")
         except Exception as e:
-            print(f"Error listing conversations: {e}")
+            log(f"Error listing conversations: {e}")
         return conversations
 
     async def open_conversation(self, title: str) -> bool:
@@ -366,7 +367,7 @@ class ChatGPTAutomation(BrowserAutomation):
             return "Failed to send message"
 
         if wait_for_response:
-            print("Waiting for response...")
+            log("Waiting for response...")
             ready = await self.wait_for_response()
             if not ready:
                 return "Response timed out"

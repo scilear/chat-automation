@@ -14,16 +14,53 @@ import argparse
 import asyncio
 import sys
 import os
+import threading
+import time
 from pathlib import Path
 
 sys.path.insert(0, '/home/fabien/clawd')
 from chat_automation.perplexity import PerplexityAutomation
 from chat_automation.config import ChatAutomationConfig
+from chat_automation.verbose import log, set_verbose
 
 SAVE_DIR = Path.home() / ".chat_automation" / "perplexity_conversations"
 SAVE_DIR.mkdir(parents=True, exist_ok=True)
 
 PERSONAS_DIR = Path(__file__).parent / "personas"
+
+
+class Spinner:
+    """Simple async-friendly spinner animation"""
+    
+    def __init__(self, message: str = "Waiting"):
+        self.message = message
+        self._running = False
+        self._thread = None
+    
+    def _spin(self):
+        chars = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+        idx = 0
+        while self._running:
+            frame = chars[idx % len(chars)]
+            sys.stdout.write(f"\r{frame} {self.message}...")
+            sys.stdout.flush()
+            time.sleep(0.1)
+            idx += 1
+    
+    def start(self):
+        self._running = True
+        self._thread = threading.Thread(target=self._spin, daemon=True)
+        self._thread.start()
+        return self
+    
+    def stop(self, final_msg: str = None):
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=0.2)
+        sys.stdout.write("\r" + " " * (len(self.message) + 10) + "\r")
+        sys.stdout.flush()
+        if final_msg:
+            print(final_msg)
 
 
 def parse_persona(message: str) -> tuple[str, str]:
@@ -76,13 +113,13 @@ class PerplexityManager:
     async def _ensure_browser(self) -> PerplexityAutomation:
         """Start browser if not running"""
         if self._perplexity is None or not await self._is_browser_alive():
-            print("Connecting to browser...")
+            log("Connecting to browser...")
             self._perplexity = PerplexityAutomation(self.config)
             await self._perplexity.start()
             await self._perplexity.goto(self.config.perplexity_url)
             await asyncio.sleep(3)
             self._browser_started = True
-            print("Browser ready")
+            log("Connected")
         return self._perplexity
     
     async def _is_browser_alive(self) -> bool:
@@ -143,7 +180,7 @@ class PerplexityManager:
             return response
             
         except Exception as e:
-            print(f"Error: {e}")
+            log(f"Error: {e}")
             return f"Error: {str(e)}"
     
     async def send_file(self, filepath: str, message: str = "") -> str:
@@ -183,7 +220,7 @@ class PerplexityManager:
             return response
             
         except Exception as e:
-            print(f"Error: {e}")
+            log(f"Error: {e}")
             return f"Error: {str(e)}"
     
     async def _auto_save(self):
@@ -214,12 +251,12 @@ class PerplexityManager:
             try:
                 if keep_browser_open:
                     await self._perplexity.stop()
-                    print("Disconnected (browser still running)")
+                    log("Disconnected")
                 else:
                     await self._perplexity.close_browser()
-                    print("Browser closed")
+                    log("Browser closed")
             except Exception as e:
-                print(f"Note: {e}")
+                log(f"Note: {e}")
         self._perplexity = None
 
 
@@ -288,10 +325,14 @@ class PerplexityCLI:
             if persona_content:
                 full_message = f"{persona_content}\n\n{actual_message}"
             
-            print(f"You: {actual_message}\n")
-            print("Waiting for response...")
+            print(f"You: {actual_message}")
+            
+            spinner = Spinner("Thinking")
+            spinner.start()
             
             response = await self.chat.send(full_message)
+            
+            spinner.stop()
             
             print(f"Perplexity: {response}\n")
             
@@ -311,7 +352,7 @@ class PerplexityCLI:
     
     async def chat_file(self, filepath: str, message: str = "", session_id: str = None):
         if not os.path.exists(filepath):
-            print(f"Error: File not found: {filepath}")
+            log(f"Error: File not found: {filepath}")
             return
         
         print(f"{'='*70}")
@@ -414,8 +455,13 @@ Examples:
   perplexity personas                           # List available personas
   perplexity list                               # List conversations
   perplexity continue perp_2024_02_10           # Continue a conversation
+
+Flags:
+  -v, --verbose    Show debug output (connection status, etc.)
         """
     )
+    
+    parser.add_argument('-v', '--verbose', action='store_true', help='Show debug output')
     
     subparsers = parser.add_subparsers(dest='command', help='Command to run')
     
@@ -440,6 +486,7 @@ Examples:
         parser.print_help()
         return
     
+    set_verbose(args.verbose)
     cli = PerplexityCLI()
     
     if args.command == 'login':

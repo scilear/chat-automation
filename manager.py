@@ -33,6 +33,7 @@ from dataclasses import dataclass, asdict
 
 from .chatgpt import ChatGPTAutomation
 from .config import ChatAutomationConfig
+from .verbose import log
 
 
 @dataclass
@@ -81,13 +82,13 @@ class ChatManager:
     async def _ensure_browser(self) -> ChatGPTAutomation:
         """Start browser if not running, with auto-restart on failure"""
         if self._chatgpt is None or not await self._is_browser_alive():
-            print("Starting browser...")
+            log("Connecting to browser...")
             self._chatgpt = ChatGPTAutomation(self.config)
             await self._chatgpt.start()
             await self._chatgpt.goto("https://chatgpt.com")
-            await asyncio.sleep(3)  # Wait for page load
+            await asyncio.sleep(3)
             self._browser_started = True
-            print("Browser ready")
+            log("Connected")
         return self._chatgpt
     
     async def _is_browser_alive(self) -> bool:
@@ -95,36 +96,30 @@ class ChatManager:
         if self._chatgpt is None or self._chatgpt.page is None:
             return False
         try:
-            # Quick health check - evaluate JS
             await self._chatgpt.page.evaluate("1 + 1")
             return True
         except Exception as e:
-            print(f"Browser check failed: {e}")
+            log(f"Browser check failed: {e}")
             return False
     
     async def _ensure_logged_in(self) -> bool:
         """Check if logged in, prompt if not"""
         chatgpt = await self._ensure_browser()
         
-        # Check for login button
         try:
             login_btn = await chatgpt.page.query_selector('[data-testid="login-button"], button:has-text("Log in")')
             if login_btn and await login_btn.is_visible():
-                print("⚠️  Please log in to ChatGPT manually in the browser window")
-                print("   Waiting for login (press Enter when done, or wait 60s)...")
-                
-                # Wait for user or timeout
+                log("Waiting for login...")
                 for i in range(60):
                     await asyncio.sleep(1)
                     login_btn = await chatgpt.page.query_selector('[data-testid="login-button"]')
                     if not login_btn or not await login_btn.is_visible():
-                        print("✓ Logged in detected")
+                        log("Logged in")
                         return True
-                
-                print("⚠️  Login timeout - continuing anyway")
+                log("Login timeout - continuing anyway")
                 return False
         except Exception as e:
-            print(f"Login check error: {e}")
+            log(f"Login check error: {e}")
         
         return True
     
@@ -175,9 +170,8 @@ class ChatManager:
             return response
             
         except Exception as e:
-            print(f"Error sending message: {e}")
-            # Try to restart browser on error
-            print("Attempting browser restart...")
+            log(f"Error sending message: {e}")
+            log("Attempting browser restart...")
             await self._restart_browser()
             return f"Error: {str(e)}"
     
@@ -210,8 +204,7 @@ class ChatManager:
             success = await self._chatgpt.attach_file(filepath, message)
             
             if not success:
-                # Fallback: read file content and send as text
-                print("File upload failed, sending as text...")
+                log("File upload failed, sending as text...")
                 with open(filepath, 'r') as f:
                     content = f.read()
                 
@@ -240,12 +233,12 @@ class ChatManager:
             return response
             
         except Exception as e:
-            print(f"Error sending file: {e}")
+            log(f"Error sending file: {e}")
             return f"Error: {str(e)}"
     
     async def _restart_browser(self):
         """Restart the browser"""
-        print("Restarting browser...")
+        log("Restarting browser...")
         if self._chatgpt:
             try:
                 await self._chatgpt.stop()
@@ -286,16 +279,15 @@ class ChatManager:
         try:
             chatgpt = await self._ensure_browser()
             await chatgpt.goto(url)
-            await asyncio.sleep(3)  # Wait for conversation to load
+            await asyncio.sleep(3)
             
-            # Update current conversation URL
             if self._current_conversation:
                 self._current_conversation.url = url
             
-            print(f"Opened conversation: {url}")
+            log(f"Opened conversation: {url}")
             return True
         except Exception as e:
-            print(f"Error opening conversation: {e}")
+            log(f"Error opening conversation: {e}")
             return False
     
     async def export_conversation(self, filepath: str) -> str:
@@ -349,14 +341,13 @@ class ChatManager:
                 url=data.get('url')  # URL may not exist in old files
             )
             
-            # If URL exists, navigate to it
             if self._current_conversation.url:
-                print(f"Opening conversation: {self._current_conversation.url}")
+                log(f"Opening conversation: {self._current_conversation.url}")
                 await self.open_conversation_by_url(self._current_conversation.url)
             
             return True
         except Exception as e:
-            print(f"Error loading conversation: {e}")
+            log(f"Error loading conversation: {e}")
             return False
     
     async def new_chat(self) -> None:
@@ -366,23 +357,17 @@ class ChatManager:
         self.start_conversation()
     
     async def close(self, keep_browser_open: bool = True):
-        """Close connection but keep browser running for reuse
-        
-        Args:
-            keep_browser_open: If True (default), browser stays running for next connection
-        """
+        """Close connection but keep browser running for reuse"""
         if self._chatgpt:
             try:
                 if keep_browser_open:
-                    # Just disconnect, don't close browser
                     await self._chatgpt.stop()
-                    print("Disconnected (browser still running)")
+                    log("Disconnected (browser still running)")
                 else:
-                    # Actually close the browser
                     await self._chatgpt.close_browser()
-                    print("Browser closed")
+                    log("Browser closed")
             except Exception as e:
-                print(f"Note: {e}")
+                log(f"Note: {e}")
         self._chatgpt = None
         self._browser_started = False
     
