@@ -1,0 +1,10 @@
+{
+  "files_reviewed": [
+    "config.py",
+    "base.py",
+    "chatgpt.py",
+    "manager.py"
+  ],
+  "overall_summary": "Failed to send message",
+  "conversation_path": "/home/fabien/clawd/chat_automation/code_review_complete.json"
+}

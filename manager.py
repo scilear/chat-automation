@@ -1,0 +1,442 @@
+"""
+Lazy Browser Manager for ChatGPT Automation
+
+Keeps browser open between conversations, with auto-restart on crash.
+Simple class-based API - no server needed.
+
+Usage:
+    from chat_manager import ChatManager
+    
+    # Browser starts automatically on first use
+    chat = ChatManager()
+    
+    # Start a conversation
+    chat.start_conversation()
+    response = chat.send("Tell me about Python")
+    
+    # Continue conversation (browser stays open)
+    response2 = chat.send("What are its main features?")
+    
+    # Save when done
+    chat.export_conversation("python_chat.json")
+    
+    # Browser stays open until you explicitly close
+    chat.close()
+"""
+
+import asyncio
+import json
+import os
+from datetime import datetime
+from typing import Optional, List, Dict, Any
+from dataclasses import dataclass, asdict
+
+from .chatgpt import ChatGPTAutomation
+from .config import ChatAutomationConfig
+
+
+@dataclass
+class Message:
+    role: str  # "user" or "assistant"
+    content: str
+    timestamp: str
+
+
+@dataclass  
+class Conversation:
+    id: str
+    title: str
+    messages: List[Message]
+    created_at: str
+    updated_at: str
+    url: Optional[str] = None  # ChatGPT conversation URL (e.g., https://chatgpt.com/c/xxx)
+
+
+class ChatManager:
+    """
+    Manages persistent ChatGPT browser sessions.
+    
+    - Lazy initialization (browser starts on first use)
+    - Auto-restart if browser crashes
+    - Conversation history tracking
+    - Export/import conversations
+    """
+    
+    def __init__(
+        self,
+        config: Optional[ChatAutomationConfig] = None,
+        save_dir: str = "~/.chat_automation/conversations"
+    ):
+        self.config = config or ChatAutomationConfig.brave_automation()
+        self.save_dir = os.path.expanduser(save_dir)
+        os.makedirs(self.save_dir, exist_ok=True)
+        
+        # Browser state
+        self._chatgpt: Optional[ChatGPTAutomation] = None
+        self._browser_started = False
+        
+        # Current conversation
+        self._current_conversation: Optional[Conversation] = None
+        
+    async def _ensure_browser(self) -> ChatGPTAutomation:
+        """Start browser if not running, with auto-restart on failure"""
+        if self._chatgpt is None or not await self._is_browser_alive():
+            print("Starting browser...")
+            self._chatgpt = ChatGPTAutomation(self.config)
+            await self._chatgpt.start()
+            await self._chatgpt.goto("https://chatgpt.com")
+            await asyncio.sleep(3)  # Wait for page load
+            self._browser_started = True
+            print("Browser ready")
+        return self._chatgpt
+    
+    async def _is_browser_alive(self) -> bool:
+        """Check if browser is still responsive"""
+        if self._chatgpt is None or self._chatgpt.page is None:
+            return False
+        try:
+            # Quick health check - evaluate JS
+            await self._chatgpt.page.evaluate("1 + 1")
+            return True
+        except Exception as e:
+            print(f"Browser check failed: {e}")
+            return False
+    
+    async def _ensure_logged_in(self) -> bool:
+        """Check if logged in, prompt if not"""
+        chatgpt = await self._ensure_browser()
+        
+        # Check for login button
+        try:
+            login_btn = await chatgpt.page.query_selector('[data-testid="login-button"], button:has-text("Log in")')
+            if login_btn and await login_btn.is_visible():
+                print("⚠️  Please log in to ChatGPT manually in the browser window")
+                print("   Waiting for login (press Enter when done, or wait 60s)...")
+                
+                # Wait for user or timeout
+                for i in range(60):
+                    await asyncio.sleep(1)
+                    login_btn = await chatgpt.page.query_selector('[data-testid="login-button"]')
+                    if not login_btn or not await login_btn.is_visible():
+                        print("✓ Logged in detected")
+                        return True
+                
+                print("⚠️  Login timeout - continuing anyway")
+                return False
+        except Exception as e:
+            print(f"Login check error: {e}")
+        
+        return True
+    
+    def start_conversation(self, title: Optional[str] = None) -> str:
+        """Start a new conversation"""
+        conv_id = f"conv_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        self._current_conversation = Conversation(
+            id=conv_id,
+            title=title or f"Conversation {conv_id}",
+            messages=[],
+            created_at=datetime.now().isoformat(),
+            updated_at=datetime.now().isoformat()
+        )
+        return conv_id
+    
+    async def send(self, message: str, wait_for_response: bool = True) -> str:
+        """Send a message in current conversation"""
+        if self._current_conversation is None:
+            self.start_conversation()
+        
+        # Ensure browser and login
+        await self._ensure_browser()
+        await self._ensure_logged_in()
+        
+        # Add user message
+        self._current_conversation.messages.append(Message(
+            role="user",
+            content=message,
+            timestamp=datetime.now().isoformat()
+        ))
+        
+        # Send to ChatGPT
+        try:
+            response = await self._chatgpt.chat(message, wait_for_response=wait_for_response)
+            
+            # Add assistant response
+            self._current_conversation.messages.append(Message(
+                role="assistant",
+                content=response,
+                timestamp=datetime.now().isoformat()
+            ))
+            
+            self._current_conversation.updated_at = datetime.now().isoformat()
+            
+            # Auto-save every message
+            await self._auto_save()
+            
+            return response
+            
+        except Exception as e:
+            print(f"Error sending message: {e}")
+            # Try to restart browser on error
+            print("Attempting browser restart...")
+            await self._restart_browser()
+            return f"Error: {str(e)}"
+    
+    async def send_file(self, filepath: str, message: str = "") -> str:
+        """Send a file attachment to ChatGPT
+        
+        Args:
+            filepath: Path to file to upload
+            message: Optional message to send with file
+            
+        Returns:
+            Response text from ChatGPT
+        """
+        if self._current_conversation is None:
+            self.start_conversation()
+        
+        # Ensure browser and login
+        await self._ensure_browser()
+        await self._ensure_logged_in()
+        
+        try:
+            # Add user message
+            self._current_conversation.messages.append(Message(
+                role="user",
+                content=f"[File: {filepath}] {message}".strip(),
+                timestamp=datetime.now().isoformat()
+            ))
+            
+            # Upload file
+            success = await self._chatgpt.attach_file(filepath, message)
+            
+            if not success:
+                # Fallback: read file content and send as text
+                print("File upload failed, sending as text...")
+                with open(filepath, 'r') as f:
+                    content = f.read()
+                
+                # Truncate if too long
+                if len(content) > 5000:
+                    content = content[:5000] + "\n\n[...truncated...]"
+                
+                response = await self._chatgpt.chat(f"Please review this code:\n\n```python\n{content}\n```", wait_for_response=True)
+            else:
+                # Wait for response after file upload
+                await self._chatgpt.wait_for_response()
+                response = await self._chatgpt.get_last_response()
+            
+            # Add assistant response
+            self._current_conversation.messages.append(Message(
+                role="assistant",
+                content=response,
+                timestamp=datetime.now().isoformat()
+            ))
+            
+            self._current_conversation.updated_at = datetime.now().isoformat()
+            
+            # Auto-save
+            await self._auto_save()
+            
+            return response
+            
+        except Exception as e:
+            print(f"Error sending file: {e}")
+            return f"Error: {str(e)}"
+    
+    async def _restart_browser(self):
+        """Restart the browser"""
+        print("Restarting browser...")
+        if self._chatgpt:
+            try:
+                await self._chatgpt.stop()
+            except:
+                pass
+        self._chatgpt = None
+        self._browser_started = False
+        await self._ensure_browser()
+    
+    async def _auto_save(self):
+        """Auto-save current conversation"""
+        if self._current_conversation:
+            await self.export_conversation(
+                os.path.join(self.save_dir, f"{self._current_conversation.id}.json")
+            )
+    
+    def get_history(self) -> List[Dict[str, Any]]:
+        """Get current conversation history"""
+        if not self._current_conversation:
+            return []
+        return [
+            {"role": msg.role, "content": msg.content, "timestamp": msg.timestamp}
+            for msg in self._current_conversation.messages
+        ]
+    
+    async def _update_conversation_url(self):
+        """Update conversation URL from browser"""
+        if self._chatgpt and self._chatgpt.page:
+            try:
+                current_url = self._chatgpt.page.url
+                if '/c/' in current_url:
+                    self._current_conversation.url = current_url
+            except:
+                pass
+    
+    async def open_conversation_by_url(self, url: str) -> bool:
+        """Open a specific conversation by its ChatGPT URL"""
+        try:
+            chatgpt = await self._ensure_browser()
+            await chatgpt.goto(url)
+            await asyncio.sleep(3)  # Wait for conversation to load
+            
+            # Update current conversation URL
+            if self._current_conversation:
+                self._current_conversation.url = url
+            
+            print(f"Opened conversation: {url}")
+            return True
+        except Exception as e:
+            print(f"Error opening conversation: {e}")
+            return False
+    
+    async def export_conversation(self, filepath: str) -> str:
+        """Export conversation to JSON file"""
+        if not self._current_conversation:
+            return "No conversation to export"
+        
+        # Update URL before exporting
+        await self._update_conversation_url()
+        
+        data = {
+            "id": self._current_conversation.id,
+            "title": self._current_conversation.title,
+            "created_at": self._current_conversation.created_at,
+            "updated_at": self._current_conversation.updated_at,
+            "url": self._current_conversation.url,
+            "messages": [
+                {"role": m.role, "content": m.content, "timestamp": m.timestamp}
+                for m in self._current_conversation.messages
+            ]
+        }
+        
+        with open(filepath, 'w') as f:
+            json.dump(data, f, indent=2)
+        
+        return filepath
+    
+    async def list_saved_conversations(self) -> List[str]:
+        """List all saved conversation files"""
+        files = []
+        for f in os.listdir(self.save_dir):
+            if f.endswith('.json'):
+                files.append(os.path.join(self.save_dir, f))
+        return sorted(files, key=os.path.getmtime, reverse=True)
+    
+    async def load_conversation(self, filepath: str) -> bool:
+        """Load a conversation from file and navigate to its URL"""
+        try:
+            with open(filepath, 'r') as f:
+                data = json.load(f)
+            
+            self._current_conversation = Conversation(
+                id=data['id'],
+                title=data['title'],
+                messages=[
+                    Message(role=m['role'], content=m['content'], timestamp=m['timestamp'])
+                    for m in data['messages']
+                ],
+                created_at=data['created_at'],
+                updated_at=data['updated_at'],
+                url=data.get('url')  # URL may not exist in old files
+            )
+            
+            # If URL exists, navigate to it
+            if self._current_conversation.url:
+                print(f"Opening conversation: {self._current_conversation.url}")
+                await self.open_conversation_by_url(self._current_conversation.url)
+            
+            return True
+        except Exception as e:
+            print(f"Error loading conversation: {e}")
+            return False
+    
+    async def new_chat(self) -> None:
+        """Start a fresh chat in browser (clears current thread)"""
+        chatgpt = await self._ensure_browser()
+        await chatgpt.start_new_chat()
+        self.start_conversation()
+    
+    async def close(self, keep_browser_open: bool = True):
+        """Close connection but keep browser running for reuse
+        
+        Args:
+            keep_browser_open: If True (default), browser stays running for next connection
+        """
+        if self._chatgpt:
+            try:
+                if keep_browser_open:
+                    # Just disconnect, don't close browser
+                    await self._chatgpt.stop()
+                    print("Disconnected (browser still running)")
+                else:
+                    # Actually close the browser
+                    await self._chatgpt.close_browser()
+                    print("Browser closed")
+            except Exception as e:
+                print(f"Note: {e}")
+        self._chatgpt = None
+        self._browser_started = False
+    
+    async def close_browser(self):
+        """Actually close the browser"""
+        await self.close(keep_browser_open=False)
+    
+    async def __aenter__(self):
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.close()
+
+
+# Convenience sync wrapper for simple usage
+class SyncChatManager:
+    """Synchronous wrapper around ChatManager"""
+    
+    def __init__(self, **kwargs):
+        self._async_manager = ChatManager(**kwargs)
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+    
+    def _run(self, coro):
+        """Run async coroutine in sync context"""
+        return self._loop.run_until_complete(coro)
+    
+    def start_conversation(self, title: Optional[str] = None) -> str:
+        return self._async_manager.start_conversation(title)
+    
+    def send(self, message: str, wait_for_response: bool = True) -> str:
+        return self._run(self._async_manager.send(message, wait_for_response))
+    
+    def get_history(self) -> List[Dict[str, Any]]:
+        return self._async_manager.get_history()
+    
+    def export_conversation(self, filepath: str) -> str:
+        return self._run(self._async_manager.export_conversation(filepath))
+    
+    def list_saved_conversations(self) -> List[str]:
+        return self._run(self._async_manager.list_saved_conversations())
+    
+    def load_conversation(self, filepath: str) -> bool:
+        return self._run(self._async_manager.load_conversation(filepath))
+    
+    def new_chat(self) -> None:
+        return self._run(self._async_manager.new_chat())
+    
+    def close(self):
+        self._run(self._async_manager.close())
+        self._loop.close()
+    
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()

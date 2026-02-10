@@ -1,0 +1,306 @@
+#!/usr/bin/env python3
+"""
+ChatGPT CLI - Generic command-line interface for ChatGPT
+
+Usage:
+    chatgpt login                              # Login and save session
+    chatgpt chat "Your message"               # Send a message
+    chatgpt chat --file code.py               # Send a file
+    chatgpt history                           # Show conversation history
+    chatgpt list                              # List saved conversations
+    chatgpt continue <session_id>             # Continue a conversation
+    chatgpt export <session_id> <output.json> # Export conversation
+"""
+
+import argparse
+import asyncio
+import sys
+import os
+from pathlib import Path
+
+sys.path.insert(0, '/home/fabien/clawd')
+from chat_automation import ChatManager, SyncChatManager
+
+SAVE_DIR = Path.home() / ".chat_automation" / "conversations"
+SAVE_DIR.mkdir(parents=True, exist_ok=True)
+
+class ChatGPTCLI:
+    def __init__(self):
+        self.chat = None
+    
+    async def login(self):
+        """Login to ChatGPT and save session"""
+        print("=" * 70)
+        print("CHATGPT LOGIN")
+        print("=" * 70)
+        print("\n1. Opening browser...")
+        print("2. Navigate to https://chatgpt.com")
+        print("3. Log in manually")
+        print("4. Press Enter here when done\n")
+        
+        self.chat = ChatManager()
+        
+        try:
+            # Start browser and go to ChatGPT
+            await self.chat._ensure_browser()
+            await self.chat._chatgpt.goto("https://chatgpt.com")
+            
+            print("Browser is open. Please log in now.")
+            print("(Browser window should be visible)")
+            print("\nPress Enter when you're logged in...")
+            input()
+            
+            # Just verify we can access the page
+            try:
+                await self.chat._chatgpt.page.evaluate("document.title")
+                print("\n✓ Login successful!")
+            except:
+                print("\n⚠ Could not verify login, but session may still be saved.")
+            print(f"✓ Session saved to: ~/.config/BraveSoftware/Brave-Automation/")
+            print("\nNext time you use chatgpt, you'll be already logged in.")
+            
+        except Exception as e:
+            print(f"\n✗ Error: {e}")
+        finally:
+            if self.chat:
+                await self.chat.close()  # Keeps browser running by default
+    
+    async def chat_message(self, message: str, session_id: str = None):
+        """Send a chat message"""
+        print(f"{'='*70}")
+        print("CHATGPT")
+        print(f"{'='*70}\n")
+        
+        self.chat = ChatManager()
+        
+        try:
+            if session_id:
+                # Continue existing conversation
+                conv_file = SAVE_DIR / f"{session_id}.json"
+                if conv_file.exists():
+                    await self.chat.load_conversation(str(conv_file))
+                else:
+                    print(f"Session not found: {session_id}")
+                    self.chat.start_conversation()
+            else:
+                # New conversation
+                self.chat.start_conversation()
+            
+            print(f"You: {message}\n")
+            print("Waiting for response...")
+            
+            response = await self.chat.send(message)
+            
+            print(f"ChatGPT: {response}\n")
+            
+            # Save
+            await self.chat.export_conversation(
+                str(SAVE_DIR / f"{self.chat._current_conversation.id}.json")
+            )
+            
+            if self.chat._current_conversation.url:
+                print(f"URL: {self.chat._current_conversation.url}")
+                print(f"Session ID: {self.chat._current_conversation.id}")
+                print(f"\nContinue with:")
+                print(f"  ./chatgpt continue {self.chat._current_conversation.id} \"your next message\"")
+            
+        except Exception as e:
+            print(f"\n✗ Error: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            if self.chat:
+                await self.chat.close()
+    
+    async def chat_file(self, filepath: str, message: str = "", session_id: str = None):
+        """Send a file"""
+        if not os.path.exists(filepath):
+            print(f"Error: File not found: {filepath}")
+            return
+        
+        print(f"{'='*70}")
+        print("CHATGPT - FILE UPLOAD")
+        print(f"{'='*70}\n")
+        
+        self.chat = ChatManager()
+        
+        try:
+            if session_id:
+                conv_file = SAVE_DIR / f"{session_id}.json"
+                if conv_file.exists():
+                    await self.chat.load_conversation(str(conv_file))
+            else:
+                self.chat.start_conversation()
+            
+            print(f"Uploading: {filepath}")
+            if message:
+                print(f"Message: {message}\n")
+            
+            response = await self.chat.send_file(filepath, message)
+            
+            print(f"\nChatGPT: {response}\n")
+            
+            await self.chat.export_conversation(
+                str(SAVE_DIR / f"{self.chat._current_conversation.id}.json")
+            )
+            
+            print(f"Session: {self.chat._current_conversation.id}")
+            
+        except Exception as e:
+            print(f"\n✗ Error: {e}")
+        finally:
+            if self.chat:
+                await self.chat.close()
+    
+    async def list_conversations(self):
+        """List all saved conversations"""
+        print(f"{'='*70}")
+        print("SAVED CONVERSATIONS")
+        print(f"{'='*70}\n")
+        
+        import json
+        
+        conversations = []
+        for f in SAVE_DIR.glob("*.json"):
+            try:
+                with open(f) as file:
+                    data = json.load(file)
+                conversations.append({
+                    'id': data.get('id', 'Unknown'),
+                    'title': data.get('title', 'Untitled'),
+                    'updated': data.get('updated_at', 'Unknown')[:10],
+                    'messages': len(data.get('messages', [])),
+                    'file': f.name
+                })
+            except:
+                pass
+        
+        if not conversations:
+            print("No saved conversations found.")
+            return
+        
+        conversations.sort(key=lambda x: x['updated'], reverse=True)
+        
+        for i, c in enumerate(conversations[:10], 1):
+            print(f"{i}. {c['title']}")
+            print(f"   ID: {c['id']}")
+            print(f"   Messages: {c['messages']}")
+            print(f"   Updated: {c['updated']}")
+            print()
+        
+        if len(conversations) > 10:
+            print(f"... and {len(conversations) - 10} more")
+    
+    async def show_history(self, session_id: str = None):
+        """Show conversation history"""
+        print(f"{'='*70}")
+        print("CONVERSATION HISTORY")
+        print(f"{'='*70}\n")
+        
+        import json
+        
+        if session_id:
+            conv_file = SAVE_DIR / f"{session_id}.json"
+            if not conv_file.exists():
+                print(f"Session not found: {session_id}")
+                return
+            
+            with open(conv_file) as f:
+                data = json.load(f)
+            
+            print(f"Title: {data.get('title', 'Untitled')}")
+            print(f"ID: {data.get('id')}")
+            print(f"Messages: {len(data.get('messages', []))}\n")
+            
+            for msg in data.get('messages', []):
+                role = "You" if msg['role'] == 'user' else "ChatGPT"
+                content = msg['content'][:200] + "..." if len(msg['content']) > 200 else msg['content']
+                print(f"{role}: {content}\n")
+        else:
+            # Show most recent
+            conversations = list(SAVE_DIR.glob("*.json"))
+            if not conversations:
+                print("No conversations found.")
+                return
+            
+            most_recent = max(conversations, key=lambda p: p.stat().st_mtime)
+            
+            with open(most_recent) as f:
+                data = json.load(f)
+            
+            print(f"Most recent: {data.get('title', 'Untitled')}")
+            print(f"ID: {data.get('id')}")
+            print(f"Messages: {len(data.get('messages', []))}\n")
+            
+            for msg in data.get('messages', [])[-5:]:  # Last 5
+                role = "You" if msg['role'] == 'user' else "ChatGPT"
+                content = msg['content'][:150] + "..." if len(msg['content']) > 150 else msg['content']
+                print(f"{role}: {content}\n")
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='ChatGPT CLI - Command line interface for ChatGPT',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  chatgpt login                              # Login to ChatGPT
+  chatgpt chat "Explain Python decorators"   # Send a message
+  chatgpt chat --file script.py              # Upload a file
+  chatgpt list                               # List conversations
+  chatgpt history                            # Show recent history
+  chatgpt continue conv_2024_02_10           # Continue a conversation
+        """
+    )
+    
+    subparsers = parser.add_subparsers(dest='command', help='Command to run')
+    
+    # Login
+    login_parser = subparsers.add_parser('login', help='Login to ChatGPT')
+    
+    # Chat
+    chat_parser = subparsers.add_parser('chat', help='Send a message')
+    chat_parser.add_argument('message', nargs='?', help='Message to send')
+    chat_parser.add_argument('--file', '-f', help='File to upload')
+    chat_parser.add_argument('--session', '-s', help='Session ID to continue')
+    
+    # List
+    list_parser = subparsers.add_parser('list', help='List saved conversations')
+    
+    # History
+    history_parser = subparsers.add_parser('history', help='Show conversation history')
+    history_parser.add_argument('--session', '-s', help='Session ID to show')
+    
+    # Continue
+    continue_parser = subparsers.add_parser('continue', help='Continue a conversation')
+    continue_parser.add_argument('session_id', help='Session ID to continue')
+    continue_parser.add_argument('message', nargs='?', help='Message to send')
+    
+    args = parser.parse_args()
+    
+    if not args.command:
+        parser.print_help()
+        return
+    
+    cli = ChatGPTCLI()
+    
+    if args.command == 'login':
+        asyncio.run(cli.login())
+    elif args.command == 'chat':
+        if args.file:
+            asyncio.run(cli.chat_file(args.file, args.message or "", args.session))
+        elif args.message:
+            asyncio.run(cli.chat_message(args.message, args.session))
+        else:
+            print("Error: Provide a message or use --file")
+    elif args.command == 'list':
+        asyncio.run(cli.list_conversations())
+    elif args.command == 'history':
+        asyncio.run(cli.show_history(args.session))
+    elif args.command == 'continue':
+        if args.message:
+            asyncio.run(cli.chat_message(args.message, args.session_id))
+        else:
+            print("Error: Provide a message to continue")
+
+if __name__ == '__main__':
+    main()

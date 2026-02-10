@@ -1,0 +1,234 @@
+#!/usr/bin/env python3
+"""
+ChatGPT Browser Daemon - Keeps browser running for instant CLI access
+
+Usage:
+    ./chatgpt-daemon start    # Start daemon (run once)
+    ./chatgpt-daemon stop     # Stop daemon
+    ./chatgpt-daemon status   # Check if running
+"""
+
+import asyncio
+import sys
+import os
+import json
+import signal
+import subprocess
+from pathlib import Path
+from datetime import datetime
+
+# Paths
+PID_FILE = Path.home() / ".chat_automation" / "daemon.pid"
+CDP_FILE = Path.home() / ".chat_automation" / "cdp_endpoint.json"
+LOG_FILE = Path.home() / ".chat_automation" / "daemon.log"
+
+# CDP port
+CDP_PORT = 9222
+
+def log(msg):
+    """Log to file"""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with open(LOG_FILE, 'a') as f:
+        f.write(f"[{timestamp}] {msg}\n")
+
+def is_running(pid):
+    """Check if process is running"""
+    try:
+        os.kill(pid, 0)
+        return True
+    except:
+        return False
+
+def get_daemon_pid():
+    """Get daemon PID if running"""
+    if PID_FILE.exists():
+        try:
+            with open(PID_FILE) as f:
+                return int(f.read().strip())
+        except:
+            pass
+    return None
+
+async def run_daemon():
+    """Main daemon loop - keeps browser alive"""
+    sys.path.insert(0, '/home/fabien/clawd')
+    from playwright.async_api import async_playwright
+    
+    log("Daemon starting...")
+    
+    try:
+        playwright = await async_playwright().start()
+        
+        # Launch browser with CDP
+        user_data_dir = Path.home() / ".config/BraveSoftware/Brave-Automation"
+        
+        log(f"Launching browser with CDP on port {CDP_PORT}")
+        
+        browser = await playwright.chromium.launch_persistent_context(
+            user_data_dir=str(user_data_dir),
+            headless=False,
+            viewport={"width": 1280, "height": 800},
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--disable-automation",
+                f"--remote-debugging-port={CDP_PORT}",
+                "--no-sandbox",
+            ],
+        )
+        
+        # Get the page
+        page = browser.pages[0] if browser.pages else await browser.new_page()
+        
+        # Navigate to ChatGPT
+        await page.goto("https://chatgpt.com")
+        log("Browser ready on ChatGPT")
+        
+        # Save CDP endpoint
+        cdp_endpoint = f"http://127.0.0.1:{CDP_PORT}"
+        CDP_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(CDP_FILE, 'w') as f:
+            json.dump({'endpoint': cdp_endpoint, 'pid': os.getpid()}, f)
+        
+        # Save PID
+        with open(PID_FILE, 'w') as f:
+            f.write(str(os.getpid()))
+        
+        log(f"Daemon ready. PID: {os.getpid()}")
+        print(f"✓ Daemon started (PID: {os.getpid()})")
+        print(f"✓ Browser running with CDP on port {CDP_PORT}")
+        print("\nYou can now use:")
+        print("  ./chatgpt-daemon status  # Check status")
+        print("  ./chatgpt chat \"Hello\"   # Fast CLI access")
+        print("  ./chatgpt-daemon stop    # Stop daemon")
+        
+        # Keep alive
+        while True:
+            await asyncio.sleep(60)
+            
+    except Exception as e:
+        log(f"Daemon error: {e}")
+        print(f"✗ Error: {e}")
+    finally:
+        log("Daemon stopping...")
+        if 'browser' in locals():
+            await browser.close()
+        if 'playwright' in locals():
+            await playwright.stop()
+        PID_FILE.unlink(missing_ok=True)
+        CDP_FILE.unlink(missing_ok=True)
+
+def start_daemon():
+    """Start daemon in background"""
+    # Check if already running
+    pid = get_daemon_pid()
+    if pid and is_running(pid):
+        print("Daemon already running")
+        print(f"PID: {pid}")
+        return
+    
+    print("Starting browser daemon...")
+    
+    # Start daemon as subprocess
+    daemon_script = Path(__file__).read_text()
+    
+    proc = subprocess.Popen(
+        [sys.executable, '-c', daemon_script, 'run'],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+        cwd=str(Path(__file__).parent)
+    )
+    
+    # Wait for daemon to start
+    import time
+    time.sleep(5)
+    
+    # Check if it started
+    pid = get_daemon_pid()
+    if pid and is_running(pid):
+        print("✓ Daemon started successfully")
+    else:
+        print("✗ Failed to start daemon")
+        print(f"Check log: {LOG_FILE}")
+
+def stop_daemon():
+    """Stop the daemon"""
+    pid = get_daemon_pid()
+    if not pid:
+        print("Daemon not running")
+        return
+    
+    if not is_running(pid):
+        print("Cleaning up stale PID file")
+        PID_FILE.unlink(missing_ok=True)
+        CDP_FILE.unlink(missing_ok=True)
+        return
+    
+    print(f"Stopping daemon (PID: {pid})...")
+    try:
+        os.kill(pid, signal.SIGTERM)
+        import time
+        time.sleep(2)
+        
+        if is_running(pid):
+            os.kill(pid, signal.SIGKILL)
+        
+        PID_FILE.unlink(missing_ok=True)
+        CDP_FILE.unlink(missing_ok=True)
+        print("✓ Daemon stopped")
+    except Exception as e:
+        print(f"✗ Error: {e}")
+
+def check_status():
+    """Check daemon status"""
+    pid = get_daemon_pid()
+    
+    if pid and is_running(pid):
+        print("✓ Daemon is running")
+        print(f"  PID: {pid}")
+        
+        if CDP_FILE.exists():
+            try:
+                with open(CDP_FILE) as f:
+                    data = json.load(f)
+                print(f"  CDP: {data.get('endpoint')}")
+            except:
+                pass
+        
+        print("\n✓ CLI commands will connect instantly!")
+        print("\nNext steps:")
+        print("  ./chatgpt chat \"Your message\"")
+        print("  ./chatgpt chat --file code.py")
+    else:
+        print("✗ Daemon is not running")
+        print("\nStart it with:")
+        print("  ./chatgpt-daemon start")
+
+def main():
+    if len(sys.argv) < 2:
+        print("ChatGPT Browser Daemon")
+        print("=" * 50)
+        print("\nUsage:")
+        print("  ./chatgpt-daemon start    # Start daemon")
+        print("  ./chatgpt-daemon stop     # Stop daemon")
+        print("  ./chatgpt-daemon status   # Check status")
+        print("\nThe daemon keeps browser running for fast CLI access.")
+        return
+    
+    command = sys.argv[1].lower()
+    
+    if command == "run":
+        # Internal command - run daemon loop
+        asyncio.run(run_daemon())
+    elif command == "start":
+        start_daemon()
+    elif command == "stop":
+        stop_daemon()
+    elif command == "status":
+        check_status()
+    else:
+        print(f"Unknown command: {command}")
+        print("Use: start, stop, or status")
+
+if __name__ == "__main__":
+    main()

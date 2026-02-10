@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chat-automation"
+version = "1.0.0"
+description = "Automation framework for AI chat services"
+requires-python = ">=3.10"
+dependencies = [
+    "playwright>=1.40.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["chat_automation*"]
