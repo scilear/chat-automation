@@ -1,21 +1,14 @@
 #!/usr/bin/env python3
 """
 ChatGPT CLI - Generic command-line interface for ChatGPT
-
-Usage:
-    chatgpt login                              # Login and save session
-    chatgpt chat "Your message"               # Send a message
-    chatgpt chat --file code.py               # Send a file
-    chatgpt history                           # Show conversation history
-    chatgpt list                              # List saved conversations
-    chatgpt continue <session_id>             # Continue a conversation
-    chatgpt export <session_id> <output.json> # Export conversation
 """
+
+import os
+os.environ["NODE_NO_WARNINGS"] = "1"
 
 import argparse
 import asyncio
 import sys
-import os
 import threading
 import time
 from pathlib import Path
