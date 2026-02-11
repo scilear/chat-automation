@@ -272,8 +272,10 @@ class ChatGPTAutomation(BrowserAutomation):
     async def wait_for_response(self, timeout: int = 120000) -> bool:
         """Wait for ChatGPT to finish generating response and input to be ready"""
         try:
-            for _ in range(timeout // 2000):
+            elapsed = 0
+            while elapsed < timeout:
                 await asyncio.sleep(2)
+                elapsed += 2000
 
                 stop_btn = await self.page.query_selector("[data-testid='stop-button'], [aria-label='Stop generating']")
                 if stop_btn and await stop_btn.is_visible():
