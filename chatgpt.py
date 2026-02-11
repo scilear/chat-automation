@@ -313,12 +313,13 @@ class ChatGPTAutomation(BrowserAutomation):
             user_msgs = await self.page.query_selector_all("[data-testid='conversation-turn:user'], .user-message, .human-message")
             assistant_msgs = await self.page.query_selector_all("[data-testid='conversation-turn:assistant'], .assistant-message, .ai-message")
 
-            for i, (user, assistant) in enumerate(zip(user_msgs, assistant_msgs)):
+            for i, user in enumerate(user_msgs):
                 user_text = (await user.text_content()) or ""
-                assistant_text = (await assistant.text_content()) or ""
                 messages.append({"role": "user", "content": user_text})
-                if assistant_text:
-                    messages.append({"role": "assistant", "content": assistant_text})
+                if i < len(assistant_msgs):
+                    assistant_text = (await assistant_msgs[i].text_content()) or ""
+                    if assistant_text:
+                        messages.append({"role": "assistant", "content": assistant_text})
         except Exception as e:
             log(f"Error getting history: {e}")
         return messages

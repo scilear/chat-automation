@@ -152,7 +152,7 @@ class BrowserAutomation(ABC):
 
     async def stop(self) -> None:
         """Close browser and cleanup - but don't clear CDP endpoint"""
-        if self.context:
+        if self.context and self.context is not self.browser:
             await self.context.close()
         if self.browser:
             await self.browser.close()

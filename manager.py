@@ -205,8 +205,11 @@ class ChatManager:
             
             if not success:
                 log("File upload failed, sending as text...")
-                with open(filepath, 'r') as f:
-                    content = f.read()
+                try:
+                    with open(filepath, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                except UnicodeDecodeError:
+                    return f"Error: Cannot send binary file '{filepath}' as text. Upload failed."
                 
                 # Truncate if too long
                 if len(content) > 5000:
@@ -329,16 +332,25 @@ class ChatManager:
             with open(filepath, 'r') as f:
                 data = json.load(f)
             
+            required = ['id', 'title', 'messages', 'created_at', 'updated_at']
+            missing = [k for k in required if k not in data]
+            if missing:
+                log(f"Invalid conversation file: missing fields {missing}")
+                return False
+            
             self._current_conversation = Conversation(
                 id=data['id'],
                 title=data['title'],
                 messages=[
-                    Message(role=m['role'], content=m['content'], timestamp=m['timestamp'])
-                    for m in data['messages']
+                    Message(
+                        role=m.get('role', 'unknown'),
+                        content=m.get('content', ''),
+                        timestamp=m.get('timestamp', '')
+                    ) for m in data['messages']
                 ],
                 created_at=data['created_at'],
                 updated_at=data['updated_at'],
-                url=data.get('url')  # URL may not exist in old files
+                url=data.get('url')
             )
             
             if self._current_conversation.url:
@@ -346,6 +358,9 @@ class ChatManager:
                 await self.open_conversation_by_url(self._current_conversation.url)
             
             return True
+        except json.JSONDecodeError as e:
+            log(f"Invalid JSON in conversation file: {e}")
+            return False
         except Exception as e:
             log(f"Error loading conversation: {e}")
             return False
