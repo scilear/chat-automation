@@ -237,7 +237,7 @@ class PerplexityManager:
         if self._perplexity:
             try:
                 if keep_browser_open:
-                    await self._perplexity.stop()
+                    await self._perplexity.disconnect()
                     log("Disconnected")
                 else:
                     await self._perplexity.close_browser()

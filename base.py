@@ -160,6 +160,17 @@ class BrowserAutomation(ABC):
             await self.playwright.stop()
         # Don't clear CDP endpoint - browser stays open for reconnection
 
+    async def disconnect(self) -> None:
+        """Disconnect from browser without closing it (for CDP connections)"""
+        # Just stop playwright, which closes the CDP connection
+        # but leaves the browser running
+        if self.playwright:
+            await self.playwright.stop()
+            self.playwright = None
+            self.browser = None
+            self.context = None
+            self.page = None
+
     async def close_browser(self) -> None:
         """Actually close the browser and clear CDP endpoint"""
         await self.stop()
