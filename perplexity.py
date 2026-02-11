@@ -8,6 +8,7 @@ from datetime import datetime
 
 from .base import BrowserAutomation
 from .config import ChatAutomationConfig
+from .verbose import log
 
 
 class PerplexityAutomation(BrowserAutomation):
@@ -106,7 +107,7 @@ class PerplexityAutomation(BrowserAutomation):
                 await new_chat_btn.click()
                 await asyncio.sleep(1)
         except Exception as e:
-            print(f"New chat button not found: {e}")
+            log(f"New chat button not found: {e}")
 
     async def send_message(self, message: str, max_retries: int = 3) -> bool:
         """Send a message to Perplexity"""
@@ -114,7 +115,7 @@ class PerplexityAutomation(BrowserAutomation):
             try:
                 element = await self.find_textarea()
                 if not element:
-                    print(f"Attempt {attempt + 1}: Could not find chat input!")
+                    log(f"Attempt {attempt + 1}: Could not find chat input!")
                     await asyncio.sleep(2)
                     continue
 
@@ -129,7 +130,7 @@ class PerplexityAutomation(BrowserAutomation):
                 for selector in selectors:
                     try:
                         await self.page.fill(selector, message, timeout=5000)
-                        print(f"Filled input via page.fill(): {message}")
+                        log(f"Filled input via page.fill(): {message}")
                         fill_success = True
                         break
                     except Exception as fill_err:
@@ -137,7 +138,7 @@ class PerplexityAutomation(BrowserAutomation):
                 
                 if not fill_success:
                     await element.fill(message)
-                    print(f"Filled input via element.fill(): {message}")
+                    log(f"Filled input via element.fill(): {message}")
                 
                 await asyncio.sleep(0.5)
 
@@ -145,26 +146,26 @@ class PerplexityAutomation(BrowserAutomation):
                 if send_btn:
                     try:
                         await send_btn.click()
-                        print(f"Sent message via button: {message}")
+                        log(f"Sent message via button: {message}")
                         return True
                     except Exception as click_err:
-                        print(f"Button click failed: {click_err}, trying Enter key...")
+                        log(f"Button click failed: {click_err}, trying Enter key...")
                         await element.press("Enter")
-                        print(f"Sent message via Enter: {message}")
+                        log(f"Sent message via Enter: {message}")
                         return True
                 else:
-                    print(f"Send button not found, using Enter key...")
+                    log(f"Send button not found, using Enter key...")
                     await element.press("Enter")
-                    print(f"Sent message via Enter: {message}")
+                    log(f"Sent message via Enter: {message}")
                     return True
 
             except Exception as e:
-                print(f"Attempt {attempt + 1} error sending message: {e}")
+                log(f"Attempt {attempt + 1} error sending message: {e}")
                 if attempt < max_retries - 1:
                     await asyncio.sleep(3)
                 continue
 
-        print("Failed to send message after all retries")
+        log("Failed to send message after all retries")
         return False
 
     async def attach_file(self, filepath: str, message: str = "") -> bool:
@@ -197,11 +198,11 @@ class PerplexityAutomation(BrowserAutomation):
                     continue
             
             if not attach_btn:
-                print("Attach file button not found, trying file input directly...")
+                log("Attach file button not found, trying file input directly...")
                 file_input = await self.page.query_selector('input[type="file"]')
                 if file_input:
                     await file_input.set_input_files(filepath)
-                    print(f"Attached file: {filepath}")
+                    log(f"Attached file: {filepath}")
                     await asyncio.sleep(2)
                     if message:
                         await self.send_message(message)
@@ -209,20 +210,20 @@ class PerplexityAutomation(BrowserAutomation):
                         send_btn = await self.find_send_button()
                         if send_btn:
                             await send_btn.click()
-                            print("Sent file")
+                            log("Sent file")
                     return True
                 else:
-                    print("No file input found")
+                    log("No file input found")
                     return False
             
             await attach_btn.click()
-            print("Clicked attach button")
+            log("Clicked attach button")
             await asyncio.sleep(1)
             
             file_input = await self.page.query_selector('input[type="file"]')
             if file_input:
                 await file_input.set_input_files(filepath)
-                print(f"Attached file: {filepath}")
+                log(f"Attached file: {filepath}")
                 await asyncio.sleep(2)
                 if message:
                     await self.send_message(message)
@@ -230,14 +231,14 @@ class PerplexityAutomation(BrowserAutomation):
                     send_btn = await self.find_send_button()
                     if send_btn:
                         await send_btn.click()
-                        print("Sent file")
+                        log("Sent file")
                 return True
             else:
-                print("File input not found after clicking attach")
+                log("File input not found after clicking attach")
                 return False
                 
         except Exception as e:
-            print(f"Error attaching file: {e}")
+            log(f"Error attaching file: {e}")
             return False
 
     async def wait_for_response(self, timeout: int = 120000) -> bool:
@@ -258,7 +259,7 @@ class PerplexityAutomation(BrowserAutomation):
 
             return False
         except Exception as e:
-            print(f"Error waiting for response: {e}")
+            log(f"Error waiting for response: {e}")
             return False
 
     async def get_last_response(self) -> str:
@@ -286,7 +287,7 @@ class PerplexityAutomation(BrowserAutomation):
             page_content = await self.page.content()
             return ""
         except Exception as e:
-            print(f"Error getting response: {e}")
+            log(f"Error getting response: {e}")
         return ""
 
     async def get_formatted_response(self) -> str:
@@ -341,13 +342,13 @@ class PerplexityAutomation(BrowserAutomation):
                 formatted = result['content']
                 return formatted
             elif result and result.get('error'):
-                print(f"Clipboard error: {result['error']}")
+                log(f"Clipboard error: {result['error']}")
                 return await self.get_last_response()
             else:
                 return await self.get_last_response()
                 
         except Exception as e:
-            print(f"Error getting formatted response: {e}")
+            log(f"Error getting formatted response: {e}")
             return await self.get_last_response()
 
     async def get_conversation_history(self) -> List[Dict[str, str]]:
@@ -370,7 +371,7 @@ class PerplexityAutomation(BrowserAutomation):
                             messages.append({"role": "assistant", "content": assistant_text})
                     break
         except Exception as e:
-            print(f"Error getting history: {e}")
+            log(f"Error getting history: {e}")
         return messages
 
     async def chat(self, message: str, wait_for_response: bool = True) -> str:
@@ -380,7 +381,7 @@ class PerplexityAutomation(BrowserAutomation):
             return "Failed to send message"
 
         if wait_for_response:
-            print("Waiting for response...")
+            log("Waiting for response...")
             ready = await self.wait_for_response()
             if not ready:
                 return "Response timed out"

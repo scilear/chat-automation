@@ -9,16 +9,16 @@ os.environ["NODE_NO_WARNINGS"] = "1"
 import argparse
 import asyncio
 import sys
-import threading
-import time
-import tempfile
-import subprocess
 from pathlib import Path
 
 sys.path.insert(0, '/home/fabien/clawd')
 from chat_automation.perplexity import PerplexityAutomation
 from chat_automation.config import ChatAutomationConfig
 from chat_automation.verbose import log, set_verbose
+from chat_automation.cli_common import (
+    Spinner, VoiceRecorder, parse_persona,
+    load_persona, list_personas as list_personas_func
+)
 
 from rich.console import Console
 from rich.markdown import Markdown
@@ -35,156 +35,18 @@ PERSONAS_DIR = Path(__file__).parent / "personas"
 HISTORY_FILE = Path.home() / ".chat_automation" / "perplexity_history"
 
 
-class VoiceRecorder:
-    """Record audio and transcribe with faster-whisper (local, free)"""
-    
-    def __init__(self):
-        self.recording_process = None
-        self.audio_file = None
-        self.model = None
-    
-    def _load_model(self):
-        if self.model is None:
-            from faster_whisper import WhisperModel
-            self.model = WhisperModel("base", device="cpu", compute_type="int8")
-        return self.model
-    
-    def start_recording(self) -> bool:
-        self.audio_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-        self.recording_process = subprocess.Popen(
-            ["arecord", "-f", "cd", "-t", "wav", self.audio_file.name],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
-        return True
-    
-    def stop_recording(self) -> tuple:
-        """Stop recording and transcribe. Returns (text, transcribe_time_seconds)"""
-        import time as time_module
-        
-        if self.recording_process:
-            self.recording_process.terminate()
-            self.recording_process.wait()
-            self.recording_process = None
-        
-        if not self.audio_file:
-            return "", 0
-        
-        audio_path = self.audio_file.name
-        self.audio_file = None
-        
-        try:
-            model = self._load_model()
-            
-            start_time = time_module.time()
-            segments, info = model.transcribe(audio_path, beam_size=5)
-            transcribe_time = time_module.time() - start_time
-            
-            os.unlink(audio_path)
-            
-            text = " ".join(segment.text for segment in segments).strip()
-            return text, transcribe_time
-            
-        except Exception as e:
-            console.print(f"[red]Transcription error: {e}[/red]")
-            if os.path.exists(audio_path):
-                os.unlink(audio_path)
-            return "", 0
-    
-    def cancel_recording(self):
-        if self.recording_process:
-            self.recording_process.terminate()
-            self.recording_process.wait()
-            self.recording_process = None
-        if self.audio_file:
-            try:
-                os.unlink(self.audio_file.name)
-            except:
-                pass
-            self.audio_file = None
-
-
-class Spinner:
-    """Simple async-friendly spinner animation"""
-    
-    def __init__(self, message: str = "Waiting"):
-        self.message = message
-        self._running = False
-        self._thread = None
-    
-    def _spin(self):
-        chars = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
-        idx = 0
-        while self._running:
-            frame = chars[idx % len(chars)]
-            sys.stdout.write(f"\r{frame} {self.message}...")
-            sys.stdout.flush()
-            time.sleep(0.1)
-            idx += 1
-    
-    def start(self):
-        self._running = True
-        self._thread = threading.Thread(target=self._spin, daemon=True)
-        self._thread.start()
-        return self
-    
-    def stop(self, final_msg: str = None):
-        self._running = False
-        if self._thread:
-            self._thread.join(timeout=0.2)
-        sys.stdout.write("\r" + " " * (len(self.message) + 10) + "\r")
-        sys.stdout.flush()
-        if final_msg:
-            print(final_msg)
-
-
-def parse_persona(message: str) -> tuple[str, str]:
-    """Extract persona name from message if present (/persona_name syntax)"""
-    if message.startswith("/"):
-        parts = message.split(None, 1)
-        if len(parts) >= 1:
-            persona_name = parts[0][1:]
-            remaining = parts[1] if len(parts) > 1 else ""
-            return persona_name, remaining
-    return "", message
-
-
-def load_persona(persona_name: str) -> str:
-    """Load persona content from personas/{persona_name}.md"""
-    if not persona_name:
-        return ""
-    persona_file = PERSONAS_DIR / f"{persona_name}.md"
-    if persona_file.exists():
-        return persona_file.read_text().strip()
-    return ""
-
-
-def list_personas() -> list[dict]:
-    """List all available personas"""
-    personas = []
-    if PERSONAS_DIR.exists():
-        for f in PERSONAS_DIR.glob("*.md"):
-            content = f.read_text().strip()
-            first_line = content.split("\n")[0][:60]
-            personas.append({
-                "name": f.stem,
-                "preview": first_line + "..." if len(first_line) == 60 else first_line
-            })
-    return sorted(personas, key=lambda x: x["name"])
-
-
 class PerplexityManager:
     """Manages persistent Perplexity browser sessions - mirrors ChatManager pattern"""
-    
+
     def __init__(self, config: ChatAutomationConfig = None, save_dir: str = "~/.chat_automation/perplexity_conversations"):
         self.config = config or ChatAutomationConfig.brave_automation()
         self.save_dir = os.path.expanduser(save_dir)
         os.makedirs(self.save_dir, exist_ok=True)
-        
+
         self._perplexity: PerplexityAutomation = None
         self._browser_started = False
         self._current_conversation = None
-    
+
     async def _ensure_browser(self) -> PerplexityAutomation:
         """Start browser if not running"""
         if self._perplexity is None or not await self._is_browser_alive():
@@ -196,7 +58,7 @@ class PerplexityManager:
             self._browser_started = True
             log("Connected")
         return self._perplexity
-    
+
     async def _is_browser_alive(self) -> bool:
         if self._perplexity is None or self._perplexity.page is None:
             return False
@@ -205,7 +67,7 @@ class PerplexityManager:
             return True
         except:
             return False
-    
+
     def start_conversation(self, title: str = None) -> str:
         from datetime import datetime
         conv_id = f"perp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -218,110 +80,110 @@ class PerplexityManager:
             'url': None
         }
         return conv_id
-    
+
     async def send(self, message: str, wait_for_response: bool = True) -> str:
         import json
         from datetime import datetime
-        
+
         if self._current_conversation is None:
             self.start_conversation()
-        
+
         await self._ensure_browser()
-        
+
         self._current_conversation['messages'].append({
             'role': 'user',
             'content': message,
             'timestamp': datetime.now().isoformat()
         })
-        
+
         try:
             response = await self._perplexity.chat(message, wait_for_response=wait_for_response)
-            
+
             self._current_conversation['messages'].append({
                 'role': 'assistant',
                 'content': response,
                 'timestamp': datetime.now().isoformat()
             })
             self._current_conversation['updated_at'] = datetime.now().isoformat()
-            
+
             try:
                 current_url = self._perplexity.page.url
                 if current_url and 'perplexity.ai' in current_url:
                     self._current_conversation['url'] = current_url
             except:
                 pass
-            
+
             await self._auto_save()
             return response
-            
+
         except Exception as e:
             log(f"Error: {e}")
             return f"Error: {str(e)}"
-    
+
     async def send_formatted(self, message: str) -> str:
         """Send a message and return response with markdown formatting preserved"""
         from datetime import datetime
-        
+
         if self._current_conversation is None:
             self.start_conversation()
-        
+
         await self._ensure_browser()
-        
+
         self._current_conversation['messages'].append({
             'role': 'user',
             'content': message,
             'timestamp': datetime.now().isoformat()
         })
-        
+
         try:
             success = await self._perplexity.send_message(message)
             if not success:
                 return "Failed to send message"
-            
+
             log("Waiting for response...")
             ready = await self._perplexity.wait_for_response()
             if not ready:
                 return "Response timed out"
-            
+
             await asyncio.sleep(1)
-            
+
             response = await self._perplexity.get_formatted_response()
-            
+
             self._current_conversation['messages'].append({
                 'role': 'assistant',
                 'content': response,
                 'timestamp': datetime.now().isoformat()
             })
             self._current_conversation['updated_at'] = datetime.now().isoformat()
-            
+
             try:
                 current_url = self._perplexity.page.url
                 if current_url and 'perplexity.ai' in current_url:
                     self._current_conversation['url'] = current_url
             except:
                 pass
-            
+
             await self._auto_save()
             return response
-            
+
         except Exception as e:
             log(f"Error: {e}")
             return f"Error: {str(e)}"
-    
+
     async def send_file(self, filepath: str, message: str = "") -> str:
         from datetime import datetime
-        
+
         if self._current_conversation is None:
             self.start_conversation()
-        
+
         await self._ensure_browser()
-        
+
         self._current_conversation['messages'].append({
             'role': 'user',
             'content': f"[File: {filepath}] {message}".strip(),
             'timestamp': datetime.now().isoformat()
         })
-        
+
         try:
             success = await self._perplexity.attach_file(filepath, message)
             if not success:
@@ -333,44 +195,44 @@ class PerplexityManager:
             else:
                 await self._perplexity.wait_for_response()
                 response = await self._perplexity.get_last_response()
-            
+
             self._current_conversation['messages'].append({
                 'role': 'assistant',
                 'content': response,
                 'timestamp': datetime.now().isoformat()
             })
             self._current_conversation['updated_at'] = datetime.now().isoformat()
-            
+
             await self._auto_save()
             return response
-            
+
         except Exception as e:
             log(f"Error: {e}")
             return f"Error: {str(e)}"
-    
+
     async def _auto_save(self):
         import json
         if self._current_conversation:
             filepath = os.path.join(self.save_dir, f"{self._current_conversation['id']}.json")
             with open(filepath, 'w') as f:
                 json.dump(self._current_conversation, f, indent=2)
-    
+
     async def load_conversation(self, filepath: str) -> bool:
         import json
         try:
             with open(filepath, 'r') as f:
                 self._current_conversation = json.load(f)
-            
+
             if self._current_conversation.get('url'):
                 perplexity = await self._ensure_browser()
                 await perplexity.goto(self._current_conversation['url'])
                 await asyncio.sleep(3)
-            
+
             return True
         except Exception as e:
             print(f"Error loading: {e}")
             return False
-    
+
     async def close(self, keep_browser_open: bool = True):
         if self._perplexity:
             try:
@@ -389,7 +251,7 @@ class PerplexityCLI:
     def __init__(self, quiet: bool = False):
         self.chat = None
         self.quiet = quiet
-    
+
     async def login(self):
         print("=" * 70)
         print("PERPLEXITY LOGIN")
@@ -398,40 +260,38 @@ class PerplexityCLI:
         print("2. Navigate to https://www.perplexity.ai")
         print("3. Log in manually")
         print("4. Press Enter here when done\n")
-        
+
         self.chat = PerplexityManager()
-        
+
         try:
             await self.chat._ensure_browser()
-            
+
             print("Browser is open. Please log in now.")
             print("\nPress Enter when you're logged in...")
             input()
-            
+
             print("\n✓ Login successful!")
             print(f"✓ Session saved to: ~/.config/BraveSoftware/Brave-Automation/")
-            
+
         except Exception as e:
             print(f"\n✗ Error: {e}")
-        finally:
-            if self.chat:
-                await self.chat.close()
-    
+        # Note: We don't close the browser - it stays running for reuse
+
     async def chat_message(self, message: str, session_id: str = None, output_file: str = None):
         import json
-        
+
         persona_name, actual_message = parse_persona(message)
         persona_content = ""
-        
+
         if persona_name:
-            persona_content = load_persona(persona_name)
+            persona_content = load_persona(persona_name, PERSONAS_DIR)
             if persona_content:
                 console.print(f"[dim][Persona: {persona_name}][/dim]\n")
             else:
                 console.print(f"[yellow][Warning: Persona '{persona_name}' not found][/yellow]\n")
-        
+
         self.chat = PerplexityManager()
-        
+
         try:
             if session_id:
                 conv_file = SAVE_DIR / f"{session_id}.json"
@@ -442,22 +302,22 @@ class PerplexityCLI:
                     self.chat.start_conversation()
             else:
                 self.chat.start_conversation()
-            
+
             full_message = actual_message
             if persona_content:
                 full_message = f"{persona_content}\n\n{actual_message}"
-            
+
             console.print(f"[bold cyan]You:[/bold cyan] {actual_message}")
-            
+
             if not self.quiet:
                 spinner = Spinner("Thinking")
                 spinner.start()
-            
+
             response = await self.chat.send_formatted(full_message)
-            
+
             if not self.quiet:
                 spinner.stop()
-            
+
             if output_file:
                 with open(output_file, 'w') as f:
                     f.write(response)
@@ -467,28 +327,26 @@ class PerplexityCLI:
                 console.print("[bold green]Perplexity:[/bold green]")
                 console.print(Markdown(response))
                 console.print()
-            
+
             if self.chat._current_conversation.get('url'):
                 console.print(f"[dim]URL: {self.chat._current_conversation['url']}[/dim]")
                 console.print(f"[dim]Session ID: {self.chat._current_conversation['id']}[/dim]")
                 console.print(f"\n[dim]Continue with:[/dim]")
                 console.print(f"[dim]  ./perplexity continue {self.chat._current_conversation['id']} \"your next message\"[/dim]")
-            
+
         except Exception as e:
             console.print(f"\n[red]Error: {e}[/red]")
             import traceback
             traceback.print_exc()
-        finally:
-            if self.chat:
-                await self.chat.close()
-    
+        # Note: We don't close the browser - it stays running for reuse
+
     async def chat_file(self, filepath: str, message: str = "", session_id: str = None, output_file: str = None):
         if not os.path.exists(filepath):
             console.print(f"[red]Error: File not found: {filepath}[/red]")
             return
-        
+
         self.chat = PerplexityManager()
-        
+
         try:
             if session_id:
                 conv_file = SAVE_DIR / f"{session_id}.json"
@@ -496,13 +354,13 @@ class PerplexityCLI:
                     await self.chat.load_conversation(str(conv_file))
             else:
                 self.chat.start_conversation()
-            
+
             console.print(f"[dim]Uploading: {filepath}[/dim]")
             if message:
                 console.print(f"[dim]Message: {message}[/dim]\n")
-            
+
             response = await self.chat.send_file(filepath, message)
-            
+
             if output_file:
                 with open(output_file, 'w') as f:
                     f.write(response)
@@ -512,22 +370,20 @@ class PerplexityCLI:
                 console.print("[bold green]Perplexity:[/bold green]")
                 console.print(Markdown(response))
                 console.print()
-            
+
             console.print(f"[dim]Session: {self.chat._current_conversation['id']}[/dim]")
-            
+
         except Exception as e:
             console.print(f"\n[red]Error: {e}[/red]")
-        finally:
-            if self.chat:
-                await self.chat.close()
-    
+        # Note: We don't close the browser - it stays running for reuse
+
     async def list_conversations(self):
         import json
-        
+
         console.print("[bold]" + "=" * 70 + "[/bold]")
         console.print("[bold]SAVED PERPLEXITY CONVERSATIONS[/bold]")
         console.print("[bold]" + "=" * 70 + "[/bold]\n")
-        
+
         conversations = []
         for f in SAVE_DIR.glob("*.json"):
             try:
@@ -542,51 +398,98 @@ class PerplexityCLI:
                 })
             except:
                 pass
-        
+
         if not conversations:
             console.print("[dim]No saved conversations found.[/dim]")
             return
-        
+
         conversations.sort(key=lambda x: x['updated'], reverse=True)
-        
+
         for i, c in enumerate(conversations[:10], 1):
             console.print(f"[bold]{i}. {c['title']}[/bold]")
             console.print(f"   [dim]ID: {c['id']}[/dim]")
             console.print(f"   [dim]Messages: {c['messages']}[/dim]")
             console.print(f"   [dim]Updated: {c['updated']}[/dim]")
             console.print()
-        
+
         if len(conversations) > 10:
             console.print(f"[dim]... and {len(conversations) - 10} more[/dim]")
-    
+
+    async def show_history(self, session_id: str = None):
+        import json
+
+        console.print("[bold]" + "=" * 70 + "[/bold]")
+        console.print("[bold]CONVERSATION HISTORY[/bold]")
+        console.print("[bold]" + "=" * 70 + "[/bold]\n")
+
+        if session_id:
+            conv_file = SAVE_DIR / f"{session_id}.json"
+            if not conv_file.exists():
+                console.print(f"[red]Session not found: {session_id}[/red]")
+                return
+
+            with open(conv_file) as f:
+                data = json.load(f)
+
+            console.print(f"[bold]Title:[/bold] {data.get('title', 'Untitled')}")
+            console.print(f"[bold]ID:[/bold] {data.get('id')}")
+            console.print(f"[bold]Messages:[/bold] {len(data.get('messages', []))}\n")
+
+            for msg in data.get('messages', []):
+                role = "You" if msg['role'] == 'user' else "Perplexity"
+                content = msg['content'][:200] + "..." if len(msg['content']) > 200 else msg['content']
+                role_style = "cyan" if msg['role'] == 'user' else "green"
+                console.print(f"[bold {role_style}]{role}:[/bold {role_style}] {content}\n")
+        else:
+            conversations = list(SAVE_DIR.glob("*.json"))
+            if not conversations:
+                console.print("[dim]No conversations found.[/dim]")
+                return
+
+            most_recent = max(conversations, key=lambda p: p.stat().st_mtime)
+
+            with open(most_recent) as f:
+                data = json.load(f)
+
+            console.print(f"[bold]Most recent:[/bold] {data.get('title', 'Untitled')}")
+            console.print(f"[bold]ID:[/bold] {data.get('id')}")
+            console.print(f"[bold]Messages:[/bold] {len(data.get('messages', []))}\n")
+
+            for msg in data.get('messages', [])[-5:]:
+                role = "You" if msg['role'] == 'user' else "Perplexity"
+                content = msg['content'][:150] + "..." if len(msg['content']) > 150 else msg['content']
+                role_style = "cyan" if msg['role'] == 'user' else "green"
+                console.print(f"[bold {role_style}]{role}:[/bold {role_style}] {content}\n")
+
     def list_personas(self):
         console.print("[bold]" + "=" * 70 + "[/bold]")
         console.print("[bold]AVAILABLE PERSONAS[/bold]")
         console.print("[bold]" + "=" * 70 + "[/bold]\n")
-        
-        personas = list_personas()
-        
+
+        personas = list_personas_func(PERSONAS_DIR)
+
         if not personas:
             console.print("[dim]No personas found in personas/ directory[/dim]")
+            console.print(f"\n[dim]Create one: echo 'Your prompt' > {PERSONAS_DIR}/myrole.md[/dim]")
             return
-        
+
         for p in personas:
             console.print(f"[bold yellow]/{p['name']}[/bold yellow]")
             console.print(f"   [dim]{p['preview']}[/dim]\n")
-        
+
         console.print("[dim]Usage: perplexity chat /analyst \"your question\"[/dim]")
-    
+
     async def interactive(self, session_id: str = None):
-        """Interactive REPL mode with voice support"""
         import json
-        
+        import time as time_module
+
         console.print("[bold cyan]Perplexity Interactive Mode[/bold cyan]")
         console.print("[dim]Commands: /exit /new /save /load <id> /voice /help[/dim]")
         console.print("[dim]Press Enter twice to send message[/dim]\n")
-        
+
         self.chat = PerplexityManager()
         voice = VoiceRecorder()
-        
+
         try:
             if session_id:
                 conv_file = SAVE_DIR / f"{session_id}.json"
@@ -598,37 +501,36 @@ class PerplexityCLI:
                     self.chat.start_conversation()
             else:
                 self.chat.start_conversation()
-            
+
             await self.chat._ensure_browser()
-            
+
             session = PromptSession(history=FileHistory(str(HISTORY_FILE)))
             buffer = []
-            
+
             while True:
                 try:
                     if buffer:
                         prompt_text = "... "
                     else:
-                        prompt_text = "[bold cyan]You:[/bold cyan] "
-                    
+                        prompt_text = "You: "
+
                     line = await session.prompt_async(prompt_text, mouse_support=False)
-                    
+
                     if line.strip() == "/exit":
                         console.print("[dim]Goodbye![/dim]")
                         break
-                    
+
                     elif line.strip() == "/new":
                         await self.chat._perplexity.start_new_chat()
-                        self.chat.start_conversation()
                         buffer = []
                         console.print("[dim]Started new conversation[/dim]\n")
                         continue
-                    
+
                     elif line.strip() == "/save":
                         await self.chat._auto_save()
                         console.print(f"[dim]Saved: {self.chat._current_conversation['id']}[/dim]\n")
                         continue
-                    
+
                     elif line.strip().startswith("/load "):
                         load_id = line.strip().split(None, 1)[1]
                         conv_file = SAVE_DIR / f"{load_id}.json"
@@ -639,7 +541,7 @@ class PerplexityCLI:
                         else:
                             console.print(f"[red]Not found: {load_id}[/red]\n")
                         continue
-                    
+
                     elif line.strip() == "/voice":
                         console.print("Recording... Press Enter to stop")
                         if voice.start_recording():
@@ -654,7 +556,7 @@ class PerplexityCLI:
                         else:
                             console.print("[red]Failed to start recording[/red]")
                         continue
-                    
+
                     elif line.strip() == "/help":
                         console.print("""
 [dim]Commands:
@@ -672,39 +574,44 @@ Tips:
 [/dim]
 """)
                         continue
-                    
+
                     elif line.strip() == "" and buffer:
                         message = "\n".join(buffer)
                         buffer = []
-                        
+
                         persona_name, actual_message = parse_persona(message)
                         persona_content = ""
-                        
+
                         if persona_name:
-                            persona_content = load_persona(persona_name)
+                            persona_content = load_persona(persona_name, PERSONAS_DIR)
                             if not persona_content:
                                 console.print(f"[yellow]Persona '{persona_name}' not found[/yellow]\n")
-                        
+
                         full_message = actual_message
                         if persona_content:
                             full_message = f"{persona_content}\n\n{actual_message}"
-                        
+
+                        console.print("[dim]Sending...[/dim]")
                         response = await self.chat.send_formatted(full_message)
-                        
+
+                        if not response or response.startswith("Error"):
+                            console.print(f"[red]Failed to get response: {response}[/red]")
+                            continue
+
                         console.print()
                         console.print("[bold green]Perplexity:[/bold green]")
                         console.print(Markdown(response))
                         console.print()
-                        
+
                         await self.chat._auto_save()
                         continue
-                    
+
                     elif line.strip() == "":
                         continue
-                    
+
                     else:
                         buffer.append(line)
-                
+
                 except KeyboardInterrupt:
                     if voice.recording_process:
                         voice.cancel_recording()
@@ -714,16 +621,14 @@ Tips:
                     continue
                 except EOFError:
                     break
-            
+
             await self.chat._auto_save()
-            
+
         except Exception as e:
             console.print(f"\n[red]Error: {e}[/red]")
             import traceback
             traceback.print_exc()
-        finally:
-            if self.chat:
-                await self.chat.close()
+        # Note: We don't close the browser in interactive mode - stays running
 
 
 def main():
@@ -734,11 +639,12 @@ def main():
 Examples:
   perplexity login                              # Login to Perplexity
   perplexity interactive                        # Interactive REPL mode
-  perplexity chat "Explain Python decorators"   # Send a message
+  perplexity chat "Explain quantum computing"   # Send a message
   perplexity chat /analyst "Review this plan"   # Use persona
-  perplexity chat --file script.py              # Upload a file
+  perplexity chat --file document.pdf           # Upload a file
   perplexity personas                           # List available personas
   perplexity list                               # List conversations
+  perplexity history                            # Show recent history
   perplexity continue perp_2024_02_10           # Continue a conversation
 
 Flags:
@@ -746,42 +652,52 @@ Flags:
   -q, --quiet      Disable spinner animation
         """
     )
-    
+
     parser.add_argument('-v', '--verbose', action='store_true', help='Show debug output')
     parser.add_argument('-q', '--quiet', action='store_true', help='Disable spinner animation')
-    
+
     subparsers = parser.add_subparsers(dest='command', help='Command to run')
-    
+
+    # Login
     login_parser = subparsers.add_parser('login', help='Login to Perplexity')
-    
+
+    # Chat
     chat_parser = subparsers.add_parser('chat', help='Send a message')
     chat_parser.add_argument('message', nargs='?', help='Message to send')
     chat_parser.add_argument('--file', '-f', help='File to upload')
     chat_parser.add_argument('--prompt-file', '-p', help='Read prompt from file')
     chat_parser.add_argument('--session', '-s', help='Session ID to continue')
     chat_parser.add_argument('--output', '-o', help='Write response to file (markdown format)')
-    
+
+    # List
     list_parser = subparsers.add_parser('list', help='List saved conversations')
-    
+
+    # Personas
     personas_parser = subparsers.add_parser('personas', help='List available personas')
-    
+
+    # History
+    history_parser = subparsers.add_parser('history', help='Show conversation history')
+    history_parser.add_argument('--session', '-s', help='Session ID to show')
+
+    # Interactive
     interactive_parser = subparsers.add_parser('interactive', help='Interactive REPL mode')
     interactive_parser.add_argument('--session', '-s', help='Session ID to continue')
-    
+
+    # Continue
     continue_parser = subparsers.add_parser('continue', help='Continue a conversation')
     continue_parser.add_argument('session_id', help='Session ID to continue')
     continue_parser.add_argument('message', nargs='?', help='Message to send')
     continue_parser.add_argument('--output', '-o', help='Write response to file (markdown format)')
-    
+
     args = parser.parse_args()
-    
+
     if not args.command:
         parser.print_help()
         return
-    
+
     set_verbose(args.verbose)
     cli = PerplexityCLI(quiet=args.quiet)
-    
+
     if args.command == 'login':
         asyncio.run(cli.login())
     elif args.command == 'chat':
@@ -800,6 +716,8 @@ Flags:
         asyncio.run(cli.list_conversations())
     elif args.command == 'personas':
         cli.list_personas()
+    elif args.command == 'history':
+        asyncio.run(cli.show_history(args.session))
     elif args.command == 'interactive':
         asyncio.run(cli.interactive(args.session))
     elif args.command == 'continue':
