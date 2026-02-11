@@ -308,6 +308,69 @@ class ChatGPTAutomation(BrowserAutomation):
             log(f"Error getting response: {e}")
         return ""
 
+    async def get_formatted_response(self) -> str:
+        """Get last response with markdown formatting preserved via clipboard
+        
+        Uses clipboard save/click/restore pattern:
+        1. Save current clipboard content
+        2. Click the copy button on the last response
+        3. Read the formatted markdown from clipboard
+        4. Restore original clipboard content
+        """
+        try:
+            await self.context.grant_permissions(['clipboard-read', 'clipboard-write'])
+            
+            result = await self.page.evaluate('''async () => {
+                let savedClipboard = null;
+                try {
+                    savedClipboard = await navigator.clipboard.readText();
+                } catch (e) {
+                }
+                
+                const copyBtns = Array.from(document.querySelectorAll('button')).filter(b => {
+                    const txt = (b.innerText || b.getAttribute('aria-label') || '').trim().toLowerCase();
+                    return txt === 'copy';
+                });
+                
+                if (!copyBtns.length) {
+                    return {error: 'No copy button found'};
+                }
+                
+                copyBtns[copyBtns.length - 1].click();
+                
+                await new Promise(r => setTimeout(r, 500));
+                
+                let newContent = null;
+                try {
+                    newContent = await navigator.clipboard.readText();
+                } catch (e) {
+                    return {error: 'Failed to read clipboard: ' + e.message};
+                }
+                
+                if (savedClipboard !== null) {
+                    try {
+                        await navigator.clipboard.writeText(savedClipboard);
+                    } catch (e) {}
+                }
+                
+                return {content: newContent, length: newContent ? newContent.length : 0};
+            }''')
+            
+            if result and result.get('content'):
+                formatted = result['content']
+                log(f"Got formatted response ({len(formatted)} chars)")
+                return formatted
+            elif result and result.get('error'):
+                log(f"Clipboard error: {result['error']}")
+                return await self.get_last_response()
+            else:
+                log("Clipboard method returned empty, falling back to text extraction")
+                return await self.get_last_response()
+                
+        except Exception as e:
+            log(f"Error getting formatted response: {e}")
+            return await self.get_last_response()
+
     async def get_conversation_history(self) -> List[Dict[str, str]]:
         """Get all messages in current conversation"""
         messages = []

@@ -17,6 +17,11 @@ sys.path.insert(0, '/home/fabien/clawd')
 from chat_automation import ChatManager, SyncChatManager
 from chat_automation.verbose import set_verbose
 
+from rich.console import Console
+from rich.markdown import Markdown
+
+console = Console()
+
 SAVE_DIR = Path.home() / ".chat_automation" / "conversations"
 SAVE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -95,9 +100,10 @@ def list_personas() -> list[dict]:
     return sorted(personas, key=lambda x: x["name"])
 
 class ChatGPTCLI:
-    def __init__(self, verbose: bool = False):
+    def __init__(self, verbose: bool = False, quiet: bool = False):
         self.chat = None
         self.verbose = verbose
+        self.quiet = quiet
         if verbose:
             os.environ["CHAT_AUTOMATION_VERBOSE"] = "1"
     
@@ -138,7 +144,7 @@ class ChatGPTCLI:
             if self.chat:
                 await self.chat.close()  # Keeps browser running by default
     
-    async def chat_message(self, message: str, session_id: str = None):
+    async def chat_message(self, message: str, session_id: str = None, output_file: str = None):
         """Send a chat message"""
         persona_name, actual_message = parse_persona(message)
         persona_content = ""
@@ -146,9 +152,9 @@ class ChatGPTCLI:
         if persona_name:
             persona_content = load_persona(persona_name)
             if persona_content:
-                print(f"[Persona: {persona_name}]\n")
+                console.print(f"[dim][Persona: {persona_name}][/dim]\n")
             else:
-                print(f"[Warning: Persona '{persona_name}' not found]\n")
+                console.print(f"[yellow][Warning: Persona '{persona_name}' not found][/yellow]\n")
         
         self.chat = ChatManager()
         
@@ -158,7 +164,7 @@ class ChatGPTCLI:
                 if conv_file.exists():
                     await self.chat.load_conversation(str(conv_file))
                 else:
-                    print(f"Session not found: {session_id}")
+                    console.print(f"[red]Session not found: {session_id}[/red]")
                     self.chat.start_conversation()
             else:
                 self.chat.start_conversation()
@@ -167,40 +173,49 @@ class ChatGPTCLI:
             if persona_content:
                 full_message = f"{persona_content}\n\n{actual_message}"
             
-            print(f"You: {actual_message}")
+            console.print(f"[bold cyan]You:[/bold cyan] {actual_message}")
             
-            spinner = Spinner("Thinking")
-            spinner.start()
+            if not self.quiet:
+                spinner = Spinner("Thinking")
+                spinner.start()
             
-            response = await self.chat.send(full_message)
+            response = await self.chat.send_formatted(full_message)
             
-            spinner.stop()
+            if not self.quiet:
+                spinner.stop()
             
-            print(f"ChatGPT: {response}\n")
+            if output_file:
+                with open(output_file, 'w') as f:
+                    f.write(response)
+                console.print(f"[dim]Response written to: {output_file}[/dim]")
+            else:
+                console.print()
+                console.print("[bold green]ChatGPT:[/bold green]")
+                console.print(Markdown(response))
+                console.print()
             
-            # Save
             await self.chat.export_conversation(
                 str(SAVE_DIR / f"{self.chat._current_conversation.id}.json")
             )
             
             if self.chat._current_conversation.url:
-                print(f"URL: {self.chat._current_conversation.url}")
-                print(f"Session ID: {self.chat._current_conversation.id}")
-                print(f"\nContinue with:")
-                print(f"  ./chatgpt continue {self.chat._current_conversation.id} \"your next message\"")
+                console.print(f"[dim]URL: {self.chat._current_conversation.url}[/dim]")
+                console.print(f"[dim]Session ID: {self.chat._current_conversation.id}[/dim]")
+                console.print(f"\n[dim]Continue with:[/dim]")
+                console.print(f"[dim]  ./chatgpt continue {self.chat._current_conversation.id} \"your next message\"[/dim]")
             
         except Exception as e:
-            print(f"\n✗ Error: {e}")
+            console.print(f"\n[red]Error: {e}[/red]")
             import traceback
             traceback.print_exc()
         finally:
             if self.chat:
                 await self.chat.close()
     
-    async def chat_file(self, filepath: str, message: str = "", session_id: str = None):
+    async def chat_file(self, filepath: str, message: str = "", session_id: str = None, output_file: str = None):
         """Send a file"""
         if not os.path.exists(filepath):
-            print(f"Error: File not found: {filepath}")
+            console.print(f"[red]Error: File not found: {filepath}[/red]")
             return
         
         self.chat = ChatManager()
@@ -213,31 +228,39 @@ class ChatGPTCLI:
             else:
                 self.chat.start_conversation()
             
-            print(f"Uploading: {filepath}")
+            console.print(f"[dim]Uploading: {filepath}[/dim]")
             if message:
-                print(f"Message: {message}\n")
+                console.print(f"[dim]Message: {message}[/dim]\n")
             
             response = await self.chat.send_file(filepath, message)
             
-            print(f"\nChatGPT: {response}\n")
+            if output_file:
+                with open(output_file, 'w') as f:
+                    f.write(response)
+                console.print(f"[dim]Response written to: {output_file}[/dim]")
+            else:
+                console.print()
+                console.print("[bold green]ChatGPT:[/bold green]")
+                console.print(Markdown(response))
+                console.print()
             
             await self.chat.export_conversation(
                 str(SAVE_DIR / f"{self.chat._current_conversation.id}.json")
             )
             
-            print(f"Session: {self.chat._current_conversation.id}")
+            console.print(f"[dim]Session: {self.chat._current_conversation.id}[/dim]")
             
         except Exception as e:
-            print(f"\n✗ Error: {e}")
+            console.print(f"\n[red]Error: {e}[/red]")
         finally:
             if self.chat:
                 await self.chat.close()
     
     async def list_conversations(self):
         """List all saved conversations"""
-        print(f"{'='*70}")
-        print("SAVED CONVERSATIONS")
-        print(f"{'='*70}\n")
+        console.print("[bold]" + "=" * 70 + "[/bold]")
+        console.print("[bold]SAVED CONVERSATIONS[/bold]")
+        console.print("[bold]" + "=" * 70 + "[/bold]\n")
         
         import json
         
@@ -257,50 +280,51 @@ class ChatGPTCLI:
                 pass
         
         if not conversations:
-            print("No saved conversations found.")
+            console.print("[dim]No saved conversations found.[/dim]")
             return
         
         conversations.sort(key=lambda x: x['updated'], reverse=True)
         
         for i, c in enumerate(conversations[:10], 1):
-            print(f"{i}. {c['title']}")
-            print(f"   ID: {c['id']}")
-            print(f"   Messages: {c['messages']}")
-            print(f"   Updated: {c['updated']}")
-            print()
+            console.print(f"[bold]{i}. {c['title']}[/bold]")
+            console.print(f"   [dim]ID: {c['id']}[/dim]")
+            console.print(f"   [dim]Messages: {c['messages']}[/dim]")
+            console.print(f"   [dim]Updated: {c['updated']}[/dim]")
+            console.print()
         
         if len(conversations) > 10:
-            print(f"... and {len(conversations) - 10} more")
+            console.print(f"[dim]... and {len(conversations) - 10} more[/dim]")
     
     async def show_history(self, session_id: str = None):
         """Show conversation history"""
-        print(f"{'='*70}")
-        print("CONVERSATION HISTORY")
-        print(f"{'='*70}\n")
+        console.print("[bold]" + "=" * 70 + "[/bold]")
+        console.print("[bold]CONVERSATION HISTORY[/bold]")
+        console.print("[bold]" + "=" * 70 + "[/bold]\n")
         
         import json
         
         if session_id:
             conv_file = SAVE_DIR / f"{session_id}.json"
             if not conv_file.exists():
-                print(f"Session not found: {session_id}")
+                console.print(f"[red]Session not found: {session_id}[/red]")
                 return
             
             with open(conv_file) as f:
                 data = json.load(f)
             
-            print(f"Title: {data.get('title', 'Untitled')}")
-            print(f"ID: {data.get('id')}")
-            print(f"Messages: {len(data.get('messages', []))}\n")
+            console.print(f"[bold]Title:[/bold] {data.get('title', 'Untitled')}")
+            console.print(f"[bold]ID:[/bold] {data.get('id')}")
+            console.print(f"[bold]Messages:[/bold] {len(data.get('messages', []))}\n")
             
             for msg in data.get('messages', []):
                 role = "You" if msg['role'] == 'user' else "ChatGPT"
                 content = msg['content'][:200] + "..." if len(msg['content']) > 200 else msg['content']
-                print(f"{role}: {content}\n")
+                role_style = "cyan" if msg['role'] == 'user' else "green"
+                console.print(f"[bold {role_style}]{role}:[/bold {role_style}] {content}\n")
         else:
             conversations = list(SAVE_DIR.glob("*.json"))
             if not conversations:
-                print("No conversations found.")
+                console.print("[dim]No conversations found.[/dim]")
                 return
             
             most_recent = max(conversations, key=lambda p: p.stat().st_mtime)
@@ -308,33 +332,34 @@ class ChatGPTCLI:
             with open(most_recent) as f:
                 data = json.load(f)
             
-            print(f"Most recent: {data.get('title', 'Untitled')}")
-            print(f"ID: {data.get('id')}")
-            print(f"Messages: {len(data.get('messages', []))}\n")
+            console.print(f"[bold]Most recent:[/bold] {data.get('title', 'Untitled')}")
+            console.print(f"[bold]ID:[/bold] {data.get('id')}")
+            console.print(f"[bold]Messages:[/bold] {len(data.get('messages', []))}\n")
             
             for msg in data.get('messages', [])[-5:]:
                 role = "You" if msg['role'] == 'user' else "ChatGPT"
                 content = msg['content'][:150] + "..." if len(msg['content']) > 150 else msg['content']
-                print(f"{role}: {content}\n")
+                role_style = "cyan" if msg['role'] == 'user' else "green"
+                console.print(f"[bold {role_style}]{role}:[/bold {role_style}] {content}\n")
     
     def list_personas(self):
         """List available personas"""
-        print(f"{'='*70}")
-        print("AVAILABLE PERSONAS")
-        print(f"{'='*70}\n")
+        console.print("[bold]" + "=" * 70 + "[/bold]")
+        console.print("[bold]AVAILABLE PERSONAS[/bold]")
+        console.print("[bold]" + "=" * 70 + "[/bold]\n")
         
         personas = list_personas()
         
         if not personas:
-            print("No personas found in personas/ directory")
-            print(f"\nCreate one: echo 'Your prompt' > {PERSONAS_DIR}/myrole.md")
+            console.print("[dim]No personas found in personas/ directory[/dim]")
+            console.print(f"\n[dim]Create one: echo 'Your prompt' > {PERSONAS_DIR}/myrole.md[/dim]")
             return
         
         for p in personas:
-            print(f"/{p['name']}")
-            print(f"   {p['preview']}\n")
+            console.print(f"[bold yellow]/{p['name']}[/bold yellow]")
+            console.print(f"   [dim]{p['preview']}[/dim]\n")
         
-        print("Usage: chatgpt chat /analyst \"your question\"")
+        console.print("[dim]Usage: chatgpt chat /analyst \"your question\"[/dim]")
 
 def main():
     parser = argparse.ArgumentParser(
@@ -357,6 +382,7 @@ Flags:
     )
     
     parser.add_argument('-v', '--verbose', action='store_true', help='Show debug output')
+    parser.add_argument('-q', '--quiet', action='store_true', help='Disable spinner animation')
     
     subparsers = parser.add_subparsers(dest='command', help='Command to run')
     
@@ -369,6 +395,7 @@ Flags:
     chat_parser.add_argument('--file', '-f', help='File to upload')
     chat_parser.add_argument('--prompt-file', '-p', help='Read prompt from file')
     chat_parser.add_argument('--session', '-s', help='Session ID to continue')
+    chat_parser.add_argument('--output', '-o', help='Write response to file (markdown format)')
     
     # List
     list_parser = subparsers.add_parser('list', help='List saved conversations')
@@ -384,6 +411,7 @@ Flags:
     continue_parser = subparsers.add_parser('continue', help='Continue a conversation')
     continue_parser.add_argument('session_id', help='Session ID to continue')
     continue_parser.add_argument('message', nargs='?', help='Message to send')
+    continue_parser.add_argument('--output', '-o', help='Write response to file (markdown format)')
     
     args = parser.parse_args()
     
@@ -392,19 +420,20 @@ Flags:
         return
     
     set_verbose(args.verbose)
-    cli = ChatGPTCLI(verbose=args.verbose)
+    cli = ChatGPTCLI(verbose=args.verbose, quiet=args.quiet)
     
     if args.command == 'login':
         asyncio.run(cli.login())
     elif args.command == 'chat':
+        output_file = getattr(args, 'output', None)
         if args.file:
-            asyncio.run(cli.chat_file(args.file, args.message or "", args.session))
+            asyncio.run(cli.chat_file(args.file, args.message or "", args.session, output_file))
         elif args.prompt_file:
             with open(args.prompt_file, 'r') as f:
                 prompt = f.read().strip()
-            asyncio.run(cli.chat_message(prompt, args.session))
+            asyncio.run(cli.chat_message(prompt, args.session, output_file))
         elif args.message:
-            asyncio.run(cli.chat_message(args.message, args.session))
+            asyncio.run(cli.chat_message(args.message, args.session, output_file))
         else:
             print("Error: Provide a message, --prompt-file, or --file")
     elif args.command == 'list':
@@ -414,8 +443,9 @@ Flags:
     elif args.command == 'history':
         asyncio.run(cli.show_history(args.session))
     elif args.command == 'continue':
+        output_file = getattr(args, 'output', None)
         if args.message:
-            asyncio.run(cli.chat_message(args.message, args.session_id))
+            asyncio.run(cli.chat_message(args.message, args.session_id, output_file))
         else:
             print("Error: Provide a message to continue")
 

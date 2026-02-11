@@ -85,8 +85,20 @@ class ChatManager:
             log("Connecting to browser...")
             self._chatgpt = ChatGPTAutomation(self.config)
             await self._chatgpt.start()
-            await self._chatgpt.goto("https://chatgpt.com")
-            await asyncio.sleep(3)
+            
+            try:
+                current_url = self._chatgpt.page.url
+                if 'chatgpt.com' not in current_url:
+                    log("Navigating to ChatGPT...")
+                    await self._chatgpt.goto("https://chatgpt.com")
+                    await asyncio.sleep(2)
+                else:
+                    log("Already on ChatGPT, skipping navigation")
+            except Exception as e:
+                log(f"URL check failed, navigating anyway: {e}")
+                await self._chatgpt.goto("https://chatgpt.com")
+                await asyncio.sleep(2)
+            
             self._browser_started = True
             log("Connected")
         return self._chatgpt
@@ -140,22 +152,18 @@ class ChatManager:
         if self._current_conversation is None:
             self.start_conversation()
         
-        # Ensure browser and login
         await self._ensure_browser()
         await self._ensure_logged_in()
         
-        # Add user message
         self._current_conversation.messages.append(Message(
             role="user",
             content=message,
             timestamp=datetime.now().isoformat()
         ))
         
-        # Send to ChatGPT
         try:
             response = await self._chatgpt.chat(message, wait_for_response=wait_for_response)
             
-            # Add assistant response
             self._current_conversation.messages.append(Message(
                 role="assistant",
                 content=response,
@@ -164,7 +172,6 @@ class ChatManager:
             
             self._current_conversation.updated_at = datetime.now().isoformat()
             
-            # Auto-save every message
             await self._auto_save()
             
             return response
@@ -172,6 +179,54 @@ class ChatManager:
         except Exception as e:
             log(f"Error sending message: {e}")
             log("Attempting browser restart...")
+            await self._restart_browser()
+            return f"Error: {str(e)}"
+    
+    async def send_formatted(self, message: str) -> str:
+        """Send a message and return response with markdown formatting preserved
+        
+        Uses clipboard-based extraction to get the raw markdown from the response.
+        """
+        if self._current_conversation is None:
+            self.start_conversation()
+        
+        await self._ensure_browser()
+        await self._ensure_logged_in()
+        
+        self._current_conversation.messages.append(Message(
+            role="user",
+            content=message,
+            timestamp=datetime.now().isoformat()
+        ))
+        
+        try:
+            success = await self._chatgpt.send_message(message)
+            if not success:
+                return "Failed to send message"
+            
+            log("Waiting for response...")
+            ready = await self._chatgpt.wait_for_response()
+            if not ready:
+                return "Response timed out"
+            
+            await asyncio.sleep(1)
+            
+            response = await self._chatgpt.get_formatted_response()
+            
+            self._current_conversation.messages.append(Message(
+                role="assistant",
+                content=response,
+                timestamp=datetime.now().isoformat()
+            ))
+            
+            self._current_conversation.updated_at = datetime.now().isoformat()
+            
+            await self._auto_save()
+            
+            return response
+            
+        except Exception as e:
+            log(f"Error sending message: {e}")
             await self._restart_browser()
             return f"Error: {str(e)}"
     
