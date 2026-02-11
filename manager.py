@@ -526,7 +526,7 @@ except KeyboardInterrupt:
         if self._chatgpt:
             try:
                 if keep_browser_open:
-                    await self._chatgpt.disconnect()
+                    await self._chatgpt.stop()
                     log("Disconnected (browser still running)")
                 else:
                     await self._chatgpt.close_browser()

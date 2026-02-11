@@ -237,7 +237,7 @@ class PerplexityManager:
         if self._perplexity:
             try:
                 if keep_browser_open:
-                    await self._perplexity.disconnect()
+                    await self._perplexity.stop()
                     log("Disconnected")
                 else:
                     await self._perplexity.close_browser()
@@ -275,7 +275,9 @@ class PerplexityCLI:
 
         except Exception as e:
             print(f"\n✗ Error: {e}")
-        # Note: We don't close the browser - it stays running for reuse
+        finally:
+            if self.chat:
+                await self.chat.close()
 
     async def chat_message(self, message: str, session_id: str = None, output_file: str = None):
         import json
@@ -338,7 +340,9 @@ class PerplexityCLI:
             console.print(f"\n[red]Error: {e}[/red]")
             import traceback
             traceback.print_exc()
-        # Note: We don't close the browser - it stays running for reuse
+        finally:
+            if self.chat:
+                await self.chat.close()
 
     async def chat_file(self, filepath: str, message: str = "", session_id: str = None, output_file: str = None):
         if not os.path.exists(filepath):
@@ -375,7 +379,9 @@ class PerplexityCLI:
 
         except Exception as e:
             console.print(f"\n[red]Error: {e}[/red]")
-        # Note: We don't close the browser - it stays running for reuse
+        finally:
+            if self.chat:
+                await self.chat.close()
 
     async def list_conversations(self):
         import json
@@ -628,7 +634,9 @@ Tips:
             console.print(f"\n[red]Error: {e}[/red]")
             import traceback
             traceback.print_exc()
-        # Note: We don't close the browser in interactive mode - stays running
+        finally:
+            if self.chat:
+                await self.chat.close()
 
 
 def main():
