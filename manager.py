@@ -27,13 +27,18 @@ Usage:
 import asyncio
 import json
 import os
+import subprocess
+import sys
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, asdict
+from pathlib import Path
 
 from .chatgpt import ChatGPTAutomation
 from .config import ChatAutomationConfig
 from .verbose import log
+
+PID_FILE = Path.home() / ".chat_automation" / "browser_daemon.pid"
 
 
 @dataclass
@@ -79,12 +84,93 @@ class ChatManager:
         # Current conversation
         self._current_conversation: Optional[Conversation] = None
         
+    async def _start_daemon(self) -> bool:
+        """Start browser daemon if not running"""
+        script = '''
+import asyncio
+import sys
+import os
+sys.path.insert(0, '/home/fabien/clawd')
+from chat_automation.config import ChatAutomationConfig
+from chat_automation.base import BrowserAutomation
+from pathlib import Path
+
+PID_FILE = Path.home() / ".chat_automation" / "browser_daemon.pid"
+
+async def main():
+    config = ChatAutomationConfig.brave_automation()
+    
+    # Actually launch a browser with CDP
+    from playwright.async_api import async_playwright
+    pw = await async_playwright().start()
+    browser = await pw.chromium.launch_persistent_context(
+        user_data_dir=config.user_data_dir,
+        headless=False,
+        viewport={"width": 1280, "height": 800},
+        args=[
+            "--disable-blink-features=AutomationControlled",
+            "--remote-debugging-port=9222",
+        ]
+    )
+    
+    page = browser.pages[0] if browser.pages else await browser.new_page()
+    await page.goto("https://chatgpt.com")
+    
+    PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(PID_FILE, 'w') as f:
+        f.write(str(os.getpid()))
+    
+    print("Browser daemon started on port 9222")
+    
+    while True:
+        await asyncio.sleep(60)
+
+try:
+    asyncio.run(main())
+except KeyboardInterrupt:
+    pass
+'''
+        script_file = Path.home() / ".chat_automation" / "daemon_runner.py"
+        script_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(script_file, 'w') as f:
+            f.write(script)
+        
+        subprocess.Popen(
+            [sys.executable, str(script_file)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True
+        )
+        
+        for _ in range(20):
+            await asyncio.sleep(1)
+            try:
+                import urllib.request
+                with urllib.request.urlopen("http://127.0.0.1:9222/json", timeout=2) as response:
+                    if response.status == 200:
+                        return True
+            except:
+                pass
+        return False
+    
     async def _ensure_browser(self) -> ChatGPTAutomation:
         """Start browser if not running, with auto-restart on failure"""
         if self._chatgpt is None or not await self._is_browser_alive():
             log("Connecting to browser...")
             self._chatgpt = ChatGPTAutomation(self.config)
-            await self._chatgpt.start()
+            
+            try:
+                await self._chatgpt.start()
+            except RuntimeError as e:
+                if "Browser daemon not running" in str(e):
+                    log("Starting browser daemon...")
+                    if await self._start_daemon():
+                        log("Daemon started, connecting...")
+                        await self._chatgpt.start()
+                    else:
+                        raise RuntimeError("Failed to start browser daemon")
+                else:
+                    raise
             
             try:
                 current_url = self._chatgpt.page.url

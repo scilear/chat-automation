@@ -11,6 +11,8 @@ import asyncio
 import sys
 import threading
 import time
+import tempfile
+import subprocess
 from pathlib import Path
 
 sys.path.insert(0, '/home/fabien/clawd')
@@ -20,6 +22,8 @@ from chat_automation.verbose import log, set_verbose
 
 from rich.console import Console
 from rich.markdown import Markdown
+from prompt_toolkit import PromptSession
+from prompt_toolkit.history import FileHistory
 
 console = Console()
 
@@ -27,6 +31,71 @@ SAVE_DIR = Path.home() / ".chat_automation" / "perplexity_conversations"
 SAVE_DIR.mkdir(parents=True, exist_ok=True)
 
 PERSONAS_DIR = Path(__file__).parent / "personas"
+
+HISTORY_FILE = Path.home() / ".chat_automation" / "perplexity_history"
+
+
+class VoiceRecorder:
+    """Record audio and transcribe with faster-whisper (local, free)"""
+    
+    def __init__(self):
+        self.recording_process = None
+        self.audio_file = None
+        self.model = None
+    
+    def _load_model(self):
+        if self.model is None:
+            from faster_whisper import WhisperModel
+            self.model = WhisperModel("base", device="cpu", compute_type="int8")
+        return self.model
+    
+    def start_recording(self) -> bool:
+        self.audio_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        self.recording_process = subprocess.Popen(
+            ["arecord", "-f", "cd", "-t", "wav", self.audio_file.name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        return True
+    
+    def stop_recording(self) -> str:
+        if self.recording_process:
+            self.recording_process.terminate()
+            self.recording_process.wait()
+            self.recording_process = None
+        
+        if not self.audio_file:
+            return ""
+        
+        audio_path = self.audio_file.name
+        self.audio_file = None
+        
+        try:
+            model = self._load_model()
+            segments, info = model.transcribe(audio_path, beam_size=5)
+            
+            os.unlink(audio_path)
+            
+            text = " ".join(segment.text for segment in segments).strip()
+            return text
+            
+        except Exception as e:
+            console.print(f"[red]Transcription error: {e}[/red]")
+            if os.path.exists(audio_path):
+                os.unlink(audio_path)
+            return ""
+    
+    def cancel_recording(self):
+        if self.recording_process:
+            self.recording_process.terminate()
+            self.recording_process.wait()
+            self.recording_process = None
+        if self.audio_file:
+            try:
+                os.unlink(self.audio_file.name)
+            except:
+                pass
+            self.audio_file = None
 
 
 class Spinner:
@@ -500,6 +569,154 @@ class PerplexityCLI:
             console.print(f"   [dim]{p['preview']}[/dim]\n")
         
         console.print("[dim]Usage: perplexity chat /analyst \"your question\"[/dim]")
+    
+    async def interactive(self, session_id: str = None):
+        """Interactive REPL mode with voice support"""
+        import json
+        
+        console.print("[bold cyan]Perplexity Interactive Mode[/bold cyan]")
+        console.print("[dim]Commands: /exit /new /save /load <id> /voice /help[/dim]")
+        console.print("[dim]Press Enter twice to send message[/dim]\n")
+        
+        self.chat = PerplexityManager()
+        voice = VoiceRecorder()
+        
+        try:
+            if session_id:
+                conv_file = SAVE_DIR / f"{session_id}.json"
+                if conv_file.exists():
+                    await self.chat.load_conversation(str(conv_file))
+                    console.print(f"[dim]Loaded: {session_id}[/dim]\n")
+                else:
+                    console.print(f"[red]Session not found: {session_id}[/red]")
+                    self.chat.start_conversation()
+            else:
+                self.chat.start_conversation()
+            
+            await self.chat._ensure_browser()
+            
+            session = PromptSession(history=FileHistory(str(HISTORY_FILE)))
+            buffer = []
+            
+            while True:
+                try:
+                    if buffer:
+                        prompt_text = "... "
+                    else:
+                        prompt_text = "[bold cyan]You:[/bold cyan] "
+                    
+                    line = await session.prompt_async(prompt_text, mouse_support=False)
+                    
+                    if line.strip() == "/exit":
+                        console.print("[dim]Goodbye![/dim]")
+                        break
+                    
+                    elif line.strip() == "/new":
+                        await self.chat._perplexity.start_new_chat()
+                        self.chat.start_conversation()
+                        buffer = []
+                        console.print("[dim]Started new conversation[/dim]\n")
+                        continue
+                    
+                    elif line.strip() == "/save":
+                        await self.chat._auto_save()
+                        console.print(f"[dim]Saved: {self.chat._current_conversation['id']}[/dim]\n")
+                        continue
+                    
+                    elif line.strip().startswith("/load "):
+                        load_id = line.strip().split(None, 1)[1]
+                        conv_file = SAVE_DIR / f"{load_id}.json"
+                        if conv_file.exists():
+                            await self.chat.load_conversation(str(conv_file))
+                            buffer = []
+                            console.print(f"[dim]Loaded: {load_id}[/dim]\n")
+                        else:
+                            console.print(f"[red]Not found: {load_id}[/red]\n")
+                        continue
+                    
+                    elif line.strip() == "/voice":
+                        console.print("[yellow]Recording... Press Enter to stop[/yellow]")
+                        if voice.start_recording():
+                            await session.prompt_async("[yellow]Recording...[/yellow] ")
+                            transcript = voice.stop_recording()
+                            if transcript:
+                                console.print(f"[dim]Heard: {transcript}[/dim]")
+                                buffer.append(transcript)
+                            else:
+                                console.print("[red]No speech detected[/red]")
+                        else:
+                            console.print("[red]Failed to start recording[/red]")
+                        continue
+                    
+                    elif line.strip() == "/help":
+                        console.print("""
+[dim]Commands:
+  /exit        Exit interactive mode
+  /new         Start new conversation
+  /save        Save current conversation
+  /load <id>   Load a conversation
+  /voice       Record voice message
+  /help        Show this help
+
+Tips:
+  - Press Enter twice to send
+  - Use /persona_name to apply a persona
+  - Arrow keys for history
+[/dim]
+""")
+                        continue
+                    
+                    elif line.strip() == "" and buffer:
+                        message = "\n".join(buffer)
+                        buffer = []
+                        
+                        persona_name, actual_message = parse_persona(message)
+                        persona_content = ""
+                        
+                        if persona_name:
+                            persona_content = load_persona(persona_name)
+                            if not persona_content:
+                                console.print(f"[yellow]Persona '{persona_name}' not found[/yellow]\n")
+                        
+                        full_message = actual_message
+                        if persona_content:
+                            full_message = f"{persona_content}\n\n{actual_message}"
+                        
+                        response = await self.chat.send_formatted(full_message)
+                        
+                        console.print()
+                        console.print("[bold green]Perplexity:[/bold green]")
+                        console.print(Markdown(response))
+                        console.print()
+                        
+                        await self.chat._auto_save()
+                        continue
+                    
+                    elif line.strip() == "":
+                        continue
+                    
+                    else:
+                        buffer.append(line)
+                
+                except KeyboardInterrupt:
+                    if voice.recording_process:
+                        voice.cancel_recording()
+                        console.print("\n[dim]Recording cancelled[/dim]")
+                    else:
+                        console.print("\n[dim]Press /exit to quit[/dim]")
+                    continue
+                except EOFError:
+                    break
+            
+            await self.chat._auto_save()
+            
+        except Exception as e:
+            console.print(f"\n[red]Error: {e}[/red]")
+            import traceback
+            traceback.print_exc()
+        finally:
+            if self.chat:
+                await self.chat.close()
 
 
 def main():
@@ -509,6 +726,7 @@ def main():
         epilog="""
 Examples:
   perplexity login                              # Login to Perplexity
+  perplexity interactive                        # Interactive REPL mode
   perplexity chat "Explain Python decorators"   # Send a message
   perplexity chat /analyst "Review this plan"   # Use persona
   perplexity chat --file script.py              # Upload a file
@@ -518,6 +736,7 @@ Examples:
 
 Flags:
   -v, --verbose    Show debug output (connection status, etc.)
+  -q, --quiet      Disable spinner animation
         """
     )
     
@@ -538,6 +757,9 @@ Flags:
     list_parser = subparsers.add_parser('list', help='List saved conversations')
     
     personas_parser = subparsers.add_parser('personas', help='List available personas')
+    
+    interactive_parser = subparsers.add_parser('interactive', help='Interactive REPL mode')
+    interactive_parser.add_argument('--session', '-s', help='Session ID to continue')
     
     continue_parser = subparsers.add_parser('continue', help='Continue a conversation')
     continue_parser.add_argument('session_id', help='Session ID to continue')
@@ -571,6 +793,8 @@ Flags:
         asyncio.run(cli.list_conversations())
     elif args.command == 'personas':
         cli.list_personas()
+    elif args.command == 'interactive':
+        asyncio.run(cli.interactive(args.session))
     elif args.command == 'continue':
         output_file = getattr(args, 'output', None)
         if args.message:
