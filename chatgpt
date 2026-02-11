@@ -464,7 +464,7 @@ class ChatGPTCLI:
                     if buffer:
                         prompt_text = "... "
                     else:
-                        prompt_text = "[bold cyan]You:[/bold cyan] "
+                        prompt_text = "You: "
                     
                     line = await session.prompt_async(prompt_text, mouse_support=False)
                     
@@ -544,7 +544,12 @@ Tips:
                         if persona_content:
                             full_message = f"{persona_content}\n\n{actual_message}"
                         
+                        console.print("[dim]Sending...[/dim]")
                         response = await self.chat.send_formatted(full_message)
+                        
+                        if not response or response.startswith("Error"):
+                            console.print(f"[red]Failed to get response: {response}[/red]")
+                            continue
                         
                         console.print()
                         console.print("[bold green]ChatGPT:[/bold green]")

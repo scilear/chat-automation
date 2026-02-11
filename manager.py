@@ -297,7 +297,14 @@ except KeyboardInterrupt:
             
             await asyncio.sleep(1)
             
+            log("Getting formatted response...")
             response = await self._chatgpt.get_formatted_response()
+            
+            if not response:
+                log("Formatted response empty, trying fallback")
+                response = await self._chatgpt.get_last_response()
+            
+            log(f"Got response ({len(response)} chars)")
             
             self._current_conversation.messages.append(Message(
                 role="assistant",
@@ -313,6 +320,8 @@ except KeyboardInterrupt:
             
         except Exception as e:
             log(f"Error sending message: {e}")
+            await self._restart_browser()
+            return f"Error: {str(e)}"
             await self._restart_browser()
             return f"Error: {str(e)}"
     

@@ -318,6 +318,9 @@ class ChatGPTAutomation(BrowserAutomation):
         4. Restore original clipboard content
         """
         try:
+            await self.scroll_to_bottom()
+            await asyncio.sleep(0.5)
+            
             await self.context.grant_permissions(['clipboard-read', 'clipboard-write'])
             
             result = await self.page.evaluate('''async () => {
@@ -333,12 +336,12 @@ class ChatGPTAutomation(BrowserAutomation):
                 });
                 
                 if (!copyBtns.length) {
-                    return {error: 'No copy button found'};
+                    return {error: 'No copy button found', buttonsChecked: document.querySelectorAll('button').length};
                 }
                 
                 copyBtns[copyBtns.length - 1].click();
                 
-                await new Promise(r => setTimeout(r, 500));
+                await new Promise(r => setTimeout(r, 800));
                 
                 let newContent = null;
                 try {
@@ -353,11 +356,15 @@ class ChatGPTAutomation(BrowserAutomation):
                     } catch (e) {}
                 }
                 
-                return {content: newContent, length: newContent ? newContent.length : 0};
+                return {content: newContent, length: newContent ? newContent.length : 0, savedLength: savedClipboard ? savedClipboard.length : 0};
             }''')
+            
+            log(f"Clipboard result: {result}")
             
             if result and result.get('content'):
                 formatted = result['content']
+                if result.get('savedLength') == len(formatted):
+                    log("Warning: clipboard content same as saved, may be stale")
                 log(f"Got formatted response ({len(formatted)} chars)")
                 return formatted
             elif result and result.get('error'):
