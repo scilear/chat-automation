@@ -58,32 +58,38 @@ class VoiceRecorder:
         )
         return True
     
-    def stop_recording(self) -> str:
+    def stop_recording(self) -> tuple:
+        """Stop recording and transcribe. Returns (text, transcribe_time_seconds)"""
+        import time as time_module
+        
         if self.recording_process:
             self.recording_process.terminate()
             self.recording_process.wait()
             self.recording_process = None
         
         if not self.audio_file:
-            return ""
+            return "", 0
         
         audio_path = self.audio_file.name
         self.audio_file = None
         
         try:
             model = self._load_model()
+            
+            start_time = time_module.time()
             segments, info = model.transcribe(audio_path, beam_size=5)
+            transcribe_time = time_module.time() - start_time
             
             os.unlink(audio_path)
             
             text = " ".join(segment.text for segment in segments).strip()
-            return text
+            return text, transcribe_time
             
         except Exception as e:
             console.print(f"[red]Transcription error: {e}[/red]")
             if os.path.exists(audio_path):
                 os.unlink(audio_path)
-            return ""
+            return "", 0
     
     def cancel_recording(self):
         if self.recording_process:
@@ -635,12 +641,13 @@ class PerplexityCLI:
                         continue
                     
                     elif line.strip() == "/voice":
-                        console.print("[yellow]Recording... Press Enter to stop[/yellow]")
+                        console.print("Recording... Press Enter to stop")
                         if voice.start_recording():
-                            await session.prompt_async("[yellow]Recording...[/yellow] ")
-                            transcript = voice.stop_recording()
+                            await session.prompt_async("Recording... ")
+                            transcript, transcribe_time = voice.stop_recording()
                             if transcript:
-                                console.print(f"[dim]Heard: {transcript}[/dim]")
+                                time_str = f"{transcribe_time:.1f}s" if transcribe_time > 0 else ""
+                                console.print(f"[dim]Transcribed{time_str}: {transcript}[/dim]")
                                 buffer.append(transcript)
                             else:
                                 console.print("[red]No speech detected[/red]")
