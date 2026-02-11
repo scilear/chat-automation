@@ -49,31 +49,31 @@ class BrowserAutomation(ABC):
             CDP_STATE_FILE.unlink()
 
     async def start(self) -> None:
-        """Start browser - try CDP first, then launch new"""
+        """Start browser - try CDP first, then auto-launch new browser"""
         self.playwright = await async_playwright().start()
 
         cdp_port = 9222
         cdp_url = f"http://127.0.0.1:{cdp_port}"
-        
+
         try:
             log("Connecting to browser daemon...")
             self.browser = await self.playwright.chromium.connect_over_cdp(cdp_url)
-            
+
             if self.browser.contexts:
                 self.context = self.browser.contexts[0]
             else:
                 self.context = await self.browser.new_context()
-            
+
             if self.context.pages:
                 self.page = self.context.pages[0]
             else:
                 self.page = await self.context.new_page()
-            
+
             log("Connected to daemon")
             return
         except Exception as e:
-            log(f"Daemon not running: {e}")
-            raise RuntimeError("Browser daemon not running. Start it with: ./chatgpt-daemon start")
+            log(f"Daemon not running ({e}), auto-starting browser...")
+            await self._launch_new_browser()
 
     async def _launch_new_browser(self) -> None:
         """Launch new browser with CDP enabled"""
