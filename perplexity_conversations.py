@@ -132,6 +132,10 @@ class PerplexityConversations(BrowserAutomation):
             if result and result.get('success'):
                 import json
                 threads = json.loads(result.get('text', '[]'))
+                # Debug: print first thread structure to see space fields
+                if threads:
+                    print(f"[DEBUG] First thread keys: {list(threads[0].keys())}")
+                    print(f"[DEBUG] Sample thread: {threads[0]}")
                 for thread in threads:
                     title = thread.get('last_query', '') or thread.get('title', 'Untitled')
                     if len(title) > 40:
@@ -143,7 +147,8 @@ class PerplexityConversations(BrowserAutomation):
                         url=f"https://www.perplexity.ai/chat/{thread.get('uuid', '')}",
                         preview='',
                         created_at=thread.get('created_at', ''),
-                        updated_at=thread.get('last_query_datetime', '')
+                        updated_at=thread.get('last_query_datetime', ''),
+                        space_id=thread.get('collection_uuid') or thread.get('space_uuid') or None
                     )
                     conversations.append(conv)
             else:
@@ -208,9 +213,17 @@ class PerplexityConversations(BrowserAutomation):
 
         return spaces
 
-    async def list_conversations(self, limit: int = 30) -> List[PerplexityConversation]:
-        """Get conversations via browser fetch API"""
-        return await self.list_conversations_via_fetch(limit=limit)
+    async def list_conversations(self, limit: int = 30, unspaced_only: bool = False) -> List[PerplexityConversation]:
+        """Get conversations via browser fetch API
+        
+        Args:
+            limit: Maximum number of conversations to fetch
+            unspaced_only: If True, only return conversations not in any space
+        """
+        conversations = await self.list_conversations_via_fetch(limit=limit)
+        if unspaced_only:
+            conversations = [c for c in conversations if not c.space_id]
+        return conversations
 
     async def open_conversation(self, conversation_id: str) -> bool:
         """Open a conversation by ID"""

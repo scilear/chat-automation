@@ -964,18 +964,25 @@ Tips:
         else:
             console.print("[yellow]No spaces found[/yellow]")
 
+        show_unspaced_only = True  # Default: show only conversations not in spaces
+        
         while True:
             try:
                 # Load conversations each iteration (to get latest state)
-                console.print("[dim]Loading conversations...[/dim]")
-                current_conversations = await conv_manager.list_conversations(limit=50)
+                filter_text = " (unspaced only)" if show_unspaced_only else " (all)"
+                console.print(f"[dim]Loading conversations{filter_text}...[/dim]")
+                current_conversations = await conv_manager.list_conversations(limit=50, unspaced_only=show_unspaced_only)
 
                 if not current_conversations:
                     console.print("[yellow]No conversations found[/yellow]")
+                    if show_unspaced_only:
+                        console.print("[dim]Try showing all conversations instead[/dim]")
+                        show_unspaced_only = False
+                        continue
                     break
 
                 indices = await self.interactive_select(
-                    "Conversations",
+                    f"Conversations{filter_text}",
                     current_conversations,
                     key_attr="id"
                 )
@@ -997,6 +1004,7 @@ Tips:
                         ("open", "Open in browser"),
                         ("move", "Move to space..."),
                         ("delete", "Delete conversations"),
+                        ("toggle", "Show all / Unspaced only"),
                         ("refresh", "Refresh list"),
                         ("quit", "Quit"),
                     ]
@@ -1049,6 +1057,10 @@ Tips:
                 elif action_result == "refresh":
                     # Just continue to reload
                     pass
+                elif action_result == "toggle":
+                    show_unspaced_only = not show_unspaced_only
+                    console.print(f"[dim]Switched to {'unspaced only' if show_unspaced_only else 'all conversations'}[/dim]")
+                    # Continue to refresh with new filter
                 elif action_result == "quit":
                     break
 
