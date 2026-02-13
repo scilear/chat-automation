@@ -100,7 +100,7 @@ class PerplexityConversations(BrowserAutomation):
         await asyncio.sleep(1)
         return True
 
-    async def list_conversations_via_fetch(self, limit: int = 30) -> List[PerplexityConversation]:
+    async def list_conversations_via_fetch(self, limit: int = 30, offset: int = 0) -> List[PerplexityConversation]:
         """Fetch conversations via browser fetch API - bypasses auth"""
         conversations = []
         try:
@@ -109,14 +109,14 @@ class PerplexityConversations(BrowserAutomation):
             await self._navigate_if_needed("https://www.perplexity.ai/library")
             await asyncio.sleep(2)
 
-            result = await self.page.evaluate('''async (limit) => {
+            result = await self.page.evaluate('''async ([limit, offset]) => {
                 try {
                     const response = await fetch(
                         "https://www.perplexity.ai/rest/thread/list_ask_threads?version=2.18&source=default",
                         {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ limit: limit, ascending: false, offset: 0, search_term: "" })
+                            body: JSON.stringify({ limit: limit, ascending: false, offset: offset, search_term: "" })
                         }
                     );
                     if (response.ok) {
@@ -127,19 +127,22 @@ class PerplexityConversations(BrowserAutomation):
                     return { success: false, error: e.message };
                 }
             }
-            ''', arg=limit)
+            ''', arg=[limit, offset])
 
             if result and result.get('success'):
                 import json
                 threads = json.loads(result.get('text', '[]'))
-                # Debug: print first thread structure to see space fields
-                if threads:
-                    print(f"[DEBUG] First thread keys: {list(threads[0].keys())}")
-                    print(f"[DEBUG] Sample thread: {threads[0]}")
+
                 for thread in threads:
                     title = thread.get('last_query', '') or thread.get('title', 'Untitled')
                     if len(title) > 40:
                         title = title[:40] + "..."
+                    
+                    # Get space info from collection field (not collection_uuid)
+                    collection = thread.get('collection')
+                    space_id = collection.get('uuid') if collection else None
+                    space_name = collection.get('title') if collection else None
+                    
                     conv = PerplexityConversation(
                         id=thread.get('uuid', ''),
                         title=title,
@@ -148,7 +151,8 @@ class PerplexityConversations(BrowserAutomation):
                         preview='',
                         created_at=thread.get('created_at', ''),
                         updated_at=thread.get('last_query_datetime', ''),
-                        space_id=thread.get('collection_uuid') or thread.get('space_uuid') or None
+                        space_id=space_id,
+                        space_name=space_name
                     )
                     conversations.append(conv)
             else:
@@ -190,7 +194,6 @@ class PerplexityConversations(BrowserAutomation):
                 import json
                 try:
                     collections = json.loads(result.get('text', '[]'))
-                    print(f"[DEBUG] Spaces API returned {len(collections)} collections")
                     for coll in collections:
                         space = PerplexitySpace(
                             id=coll.get('uuid', ''),
@@ -202,25 +205,22 @@ class PerplexityConversations(BrowserAutomation):
                         )
                         spaces.append(space)
                 except Exception as e:
-                    print(f"[DEBUG] Error parsing spaces: {e}")
-                    print(f"[DEBUG] Response text: {result.get('text', 'N/A')[:200]}")
-            else:
-                error = result.get('error', 'Unknown') if result else 'No result'
-                print(f"[DEBUG] Fetch error: {error}")
+                    log(f"Error parsing spaces: {e}")
 
         except Exception as e:
             log(f"Error fetching spaces: {e}")
 
         return spaces
 
-    async def list_conversations(self, limit: int = 30, unspaced_only: bool = False) -> List[PerplexityConversation]:
+    async def list_conversations(self, limit: int = 30, offset: int = 0, unspaced_only: bool = False) -> List[PerplexityConversation]:
         """Get conversations via browser fetch API
         
         Args:
             limit: Maximum number of conversations to fetch
+            offset: Number of conversations to skip (for pagination)
             unspaced_only: If True, only return conversations not in any space
         """
-        conversations = await self.list_conversations_via_fetch(limit=limit)
+        conversations = await self.list_conversations_via_fetch(limit=limit, offset=offset)
         if unspaced_only:
             conversations = [c for c in conversations if not c.space_id]
         return conversations
@@ -276,7 +276,6 @@ class PerplexityConversations(BrowserAutomation):
     async def delete_conversation_via_api(self, conversation_id: str) -> bool:
         """Delete a conversation via browser fetch API"""
         try:
-            print(f"[DEBUG] Attempting to delete conversation: {conversation_id}")
             await self.ensure_connection()
 
             result = await self.page.evaluate('''async (entry_uuid) => {
@@ -318,7 +317,6 @@ class PerplexityConversations(BrowserAutomation):
     async def move_conversation_to_space_via_api(self, conversation_id: str, space_id: str) -> bool:
         """Move a conversation to a space via browser fetch API"""
         try:
-            print(f"[DEBUG] Attempting to move conversation {conversation_id} to space {space_id}")
             await self.ensure_connection()
 
             result = await self.page.evaluate('''async ([entry_uuid, new_collection_uuid]) => {

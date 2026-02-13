@@ -965,13 +965,31 @@ Tips:
             console.print("[yellow]No spaces found[/yellow]")
 
         show_unspaced_only = True  # Default: show only conversations not in spaces
+        current_offset = 0
+        batch_size = 50
+        loaded_conversation_ids = set()
+        all_conversations = []
         
         while True:
             try:
                 # Load conversations each iteration (to get latest state)
                 filter_text = " (unspaced only)" if show_unspaced_only else " (all)"
-                console.print(f"[dim]Loading conversations{filter_text}...[/dim]")
-                current_conversations = await conv_manager.list_conversations(limit=50, unspaced_only=show_unspaced_only)
+                if current_offset == 0:
+                    console.print(f"[dim]Loading conversations{filter_text}...[/dim]")
+                    loaded_conversation_ids = set()
+                    all_conversations = []
+                else:
+                    console.print(f"[dim]Loading more conversations (offset: {current_offset}){filter_text}...[/dim]")
+                
+                new_conversations = await conv_manager.list_conversations(limit=batch_size, offset=current_offset, unspaced_only=show_unspaced_only)
+                
+                # Filter out duplicates
+                unique_new = [c for c in new_conversations if c.id not in loaded_conversation_ids]
+                for c in unique_new:
+                    loaded_conversation_ids.add(c.id)
+                all_conversations.extend(unique_new)
+                
+                current_conversations = all_conversations
 
                 if not current_conversations:
                     console.print("[yellow]No conversations found[/yellow]")
@@ -999,11 +1017,12 @@ Tips:
 
                 action_result = await radiolist_dialog(
                     title="Action",
-                    text="Choose an action:",
+                    text=f"Choose an action ({len(current_conversations)} conversations loaded):",
                     values=[
                         ("open", "Open in browser"),
                         ("move", "Move to space..."),
                         ("delete", "Delete conversations"),
+                        ("load_more", f"Load more (+{batch_size})"),
                         ("toggle", "Show all / Unspaced only"),
                         ("refresh", "Refresh list"),
                         ("quit", "Quit"),
@@ -1051,15 +1070,24 @@ Tips:
                         success = await conv_manager.delete_conversation_via_api(current_conversations[i].id)
                         if success:
                             console.print(f"[green]✓ Deleted: {current_conversations[i].title[:40]}[/green]")
+                            # Remove from loaded set so it doesn't reappear
+                            loaded_conversation_ids.discard(current_conversations[i].id)
                         else:
                             console.print(f"[red]✗ Failed: {current_conversations[i].title[:40]}[/red]")
+                    # Reset offset to refresh from beginning after delete
+                    current_offset = 0
                     # Continue to refresh conversations automatically after delete
+                elif action_result == "load_more":
+                    current_offset += batch_size
+                    # Continue to load more conversations
                 elif action_result == "refresh":
+                    current_offset = 0
                     # Just continue to reload
-                    pass
                 elif action_result == "toggle":
                     show_unspaced_only = not show_unspaced_only
                     console.print(f"[dim]Switched to {'unspaced only' if show_unspaced_only else 'all conversations'}[/dim]")
+                    # Reset offset when switching filter modes
+                    current_offset = 0
                     # Continue to refresh with new filter
                 elif action_result == "quit":
                     break
