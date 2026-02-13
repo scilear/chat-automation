@@ -5,6 +5,9 @@ Base browser automation module with CDP support
 import asyncio
 import os
 import json
+import subprocess
+import time
+import urllib.request
 from pathlib import Path
 from playwright.async_api import async_playwright, Browser, Page, BrowserContext
 from typing import Optional, List, Dict, Any
@@ -14,6 +17,9 @@ from .config import ChatAutomationConfig
 from .verbose import log
 
 CDP_STATE_FILE = Path.home() / ".chat_automation" / "browser_cdp.json"
+DAEMON_SCRIPT = Path(__file__).parent / "browser-daemon"
+CDP_PORT = 9222
+
 
 class BrowserAutomation(ABC):
     """Abstract base class for browser automation with CDP support"""
@@ -24,39 +30,58 @@ class BrowserAutomation(ABC):
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
-        self._cdp_ws_endpoint: Optional[str] = None
 
-    def _get_cdp_endpoint(self) -> Optional[str]:
-        """Get saved CDP endpoint if browser is still running"""
-        if CDP_STATE_FILE.exists():
-            try:
-                with open(CDP_STATE_FILE) as f:
-                    data = json.load(f)
-                return data.get('ws_endpoint')
-            except:
-                pass
-        return None
+    def _is_cdp_running(self) -> bool:
+        """Check if CDP endpoint is responding"""
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{CDP_PORT}/json", timeout=2) as response:
+                return response.status == 200
+        except:
+            return False
 
-    def _save_cdp_endpoint(self, ws_endpoint: str):
-        """Save CDP endpoint for reconnection"""
-        CDP_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(CDP_STATE_FILE, 'w') as f:
-            json.dump({'ws_endpoint': ws_endpoint}, f)
-
-    def _clear_cdp_endpoint(self):
-        """Clear saved CDP endpoint"""
-        if CDP_STATE_FILE.exists():
-            CDP_STATE_FILE.unlink()
+    async def _start_daemon(self) -> bool:
+        """Auto-start the browser daemon"""
+        log("Browser daemon not running, auto-starting...")
+        
+        daemon_path = str(DAEMON_SCRIPT)
+        if not os.path.exists(daemon_path):
+            log(f"Daemon script not found: {daemon_path}")
+            return False
+        
+        # Use setsid to create new session so daemon survives parent exit
+        subprocess.Popen(
+            ['setsid', daemon_path, "start"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        
+        # Wait for daemon to be ready (up to 30 seconds)
+        log("Waiting for daemon to start...")
+        for i in range(30):
+            await asyncio.sleep(1)
+            if self._is_cdp_running():
+                log("Daemon is ready")
+                return True
+        
+        log("Daemon failed to start")
+        return False
 
     async def start(self) -> None:
-        """Start browser - try CDP first, then auto-launch new browser"""
+        """Start browser - connect to daemon via CDP, auto-start if needed"""
         self.playwright = await async_playwright().start()
 
-        cdp_port = 9222
-        cdp_url = f"http://127.0.0.1:{cdp_port}"
+        # Check if daemon is running
+        if not self._is_cdp_running():
+            # Auto-start daemon
+            if not await self._start_daemon():
+                raise RuntimeError("Failed to start browser daemon")
 
+        # Connect via CDP
+        log("Connecting to browser via CDP...")
+        cdp_url = f"http://127.0.0.1:{CDP_PORT}"
+        
         try:
-            log("Connecting to browser daemon...")
             self.browser = await self.playwright.chromium.connect_over_cdp(cdp_url)
 
             if self.browser.contexts:
@@ -69,113 +94,53 @@ class BrowserAutomation(ABC):
             else:
                 self.page = await self.context.new_page()
 
-            log("Connected to daemon")
-            return
+            # Save CDP endpoint
+            CDP_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with open(CDP_STATE_FILE, 'w') as f:
+                json.dump({'ws_endpoint': f"ws://127.0.0.1:{CDP_PORT}"}, f)
+
+            log("Connected to browser daemon")
+            
         except Exception as e:
-            log(f"Daemon not running ({e}), auto-starting browser...")
-            await self._launch_new_browser()
-
-    async def _launch_new_browser(self) -> None:
-        """Launch new browser with CDP enabled"""
-        log("Starting new browser...")
-
-        Brave_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-
-        # CDP port for reconnection
-        CDP_PORT = 9222
-
-        ANTI_DETECTION_ARGS = [
-            "--disable-blink-features=AutomationControlled",
-            "--disable-automation",
-            "--disable-dev-shm-usage",
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--disable-gpu",
-            "--window-size=1280,800",
-            f"--remote-debugging-port={CDP_PORT}",
-        ]
-
-        if self.config.user_data_dir:
-            browser = await self.playwright.chromium.launch_persistent_context(
-                user_data_dir=self.config.user_data_dir,
-                headless=self.config.headless,
-                viewport={"width": 1280, "height": 800},
-                user_agent=Brave_USER_AGENT,
-                args=ANTI_DETECTION_ARGS,
-            )
-            # For persistent context, the browser is the context
-            self.browser = browser
-            self.context = browser
-            self.page = browser.pages[0] if browser.pages else None
-            
-            # Save CDP endpoint
-            ws_endpoint = f"ws://127.0.0.1:{CDP_PORT}"
-            self._save_cdp_endpoint(ws_endpoint)
-        else:
-            browser_args: Dict[str, Any] = {
-                "headless": self.config.headless,
-                "args": ANTI_DETECTION_ARGS,
-            }
-
-            if self.config.browser_channel:
-                browser_args["channel"] = self.config.browser_channel
-            if self.config.browser_executable_path:
-                browser_args["executable_path"] = self.config.browser_executable_path
-
-            self.browser = await self.playwright.chromium.launch(**browser_args)
-
-            self.context = await self.browser.new_context(
-                viewport={"width": 1280, "height": 800},
-                user_agent=Brave_USER_AGENT,
-            )
-            self.page = await self.context.new_page()
-
-            await self.page.add_init_script("""
-                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-                Object.defineProperty(navigator, 'automation', {get: () => undefined});
-            """)
-            
-            # Save CDP endpoint
-            ws_endpoint = f"ws://127.0.0.1:{CDP_PORT}"
-            self._save_cdp_endpoint(ws_endpoint)
-
-        if self.page:
-            self.page.set_default_timeout(self.config.timeout)
-            self._setup_page_handlers()
-        
-        log(f"Browser started with CDP on port {CDP_PORT}")
+            log(f"Failed to connect via CDP: {e}")
+            raise
 
     def _setup_page_handlers(self):
         """Setup automatic handlers for common page events"""
-        self.page.on("dialog", lambda dialog: dialog.accept())
-        self.page.on("popup", lambda popup: None)
+        if self.page:
+            self.page.on("dialog", lambda dialog: dialog.accept())
+            self.page.on("popup", lambda popup: None)
 
     async def stop(self) -> None:
-        """Close browser and cleanup - but don't clear CDP endpoint"""
-        if self.context and self.context is not self.browser:
-            await self.context.close()
-        if self.browser:
-            await self.browser.close()
+        """Close browser connection but keep daemon running"""
+        # Just stop playwright - this closes the CDP connection
+        # but leaves the browser/daemon running
         if self.playwright:
             await self.playwright.stop()
-        # Don't clear CDP endpoint - browser stays open for reconnection
+        self.playwright = None
+        self.browser = None
+        self.context = None
+        self.page = None
 
     async def disconnect(self) -> None:
-        """Disconnect from browser without closing it (for CDP connections)"""
-        # Just stop playwright, which closes the CDP connection
-        # but leaves the browser running
-        if self.playwright:
-            await self.playwright.stop()
-            self.playwright = None
-            self.browser = None
-            self.context = None
-            self.page = None
+        """Alias for stop() - disconnect without closing browser"""
+        await self.stop()
 
     async def close_browser(self) -> None:
-        """Actually close the browser and clear CDP endpoint"""
+        """Actually close the browser daemon"""
+        # Stop connection first
         await self.stop()
-        self._clear_cdp_endpoint()
-        log("Browser closed")
+        
+        # Stop the daemon
+        daemon_path = str(DAEMON_SCRIPT)
+        if os.path.exists(daemon_path):
+            subprocess.run([daemon_path, "stop"], capture_output=True)
+        
+        # Clear CDP state
+        if CDP_STATE_FILE.exists():
+            CDP_STATE_FILE.unlink()
+        
+        log("Browser daemon stopped")
 
     async def goto(self, url: str) -> None:
         """Navigate to URL"""

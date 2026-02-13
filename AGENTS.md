@@ -17,11 +17,8 @@ pip install -r requirements.txt
 # Install Playwright browsers
 playwright install chromium
 
-# Verify installation
-python -c "from chat_automation import SyncChatManager; print('Ready')"
-
-# Run a simple example
-python examples/interactive_chat.py
+# Run a single test
+python -m pytest examples/test_chatgpt.py -v
 
 # Python syntax check
 python -m py_compile chat_automation/*.py
@@ -29,23 +26,52 @@ python -m py_compile chat_automation/*.py
 # Type checking (if mypy installed)
 python -m mypy chat_automation/
 
-# Run single test
-python -m pytest examples/test_chatgpt.py -v
+# Run an example
+python examples/interactive_chat.py
+```
+
+## Dependencies
+
+### External Tools
+
+| Tool | Purpose | Install |
+|------|---------|---------|
+| **fzf** | Interactive fuzzy finder for CLI menus | `./install_dependencies.sh` or `apt install fzf` |
+| **Playwright** | Browser automation | `playwright install chromium` |
+
+### Interactive Selectors
+
+Use fzf for interactive selection in CLI tools:
+
+```python
+async def interactive_select(self, title: str, items: List, key_attr: str, multi: bool = True):
+    """Interactive selector using fzf"""
+    import subprocess
+    
+    lines = []
+    for item in items:
+        key = getattr(item, key_attr, '')
+        display = getattr(item, "title", str(item))
+        lines.append(f"{display}\t{key}")
+    
+    proc = subprocess.Popen(
+        ["fzf", "--multi", "--header", title],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True
+    )
+    stdout, _ = proc.communicate("\n".join(lines))
+    # Parse selected items from stdout...
 ```
 
 ## Browser Daemon
 
-The daemon keeps the browser running for instant CLI connections:
+Keep browser running for instant CLI connections:
 
 ```bash
-# Start daemon (keeps browser open)
-python browser_daemon.py start
-
-# Check status
-python browser_daemon.py status
-
-# Stop daemon
-python browser_daemon.py stop
+python browser_daemon.py start   # Start daemon
+python browser_daemon.py status  # Check status
+python browser_daemon.py stop    # Stop daemon
 ```
 
 ## Code Style Guidelines
@@ -70,7 +96,7 @@ from .config import ChatAutomationConfig
 ```
 
 ### Type Hints
-Use full type hints for function signatures:
+Use full type hints for all function signatures:
 
 ```python
 async def send_message(self, message: str, wait_for_response: bool = True) -> str:
@@ -86,12 +112,13 @@ async def find_textarea(self) -> Optional[PageElement]:
 ### Naming Conventions
 - **Classes**: `PascalCase` (`ChatManager`, `ChatGPTAutomation`)
 - **Functions/Variables**: `snake_case` (`send_message`, `user_data_dir`)
-- **Constants**: `UPPER_SNAKE_CASE` or `snake_case` (`DEFAULT_CONFIG`)
+- **Constants**: `UPPER_SNAKE_CASE` (`DEFAULT_CONFIG`, `PID_FILE`)
 - **Private methods**: Leading underscore (`_ensure_browser`, `_is_browser_alive`)
 
 ### Formatting
 - Line length: ~100 characters (practical, not strict)
 - Indentation: 4 spaces
+- Use double quotes for strings
 
 ### Dataclasses for Structured Data
 

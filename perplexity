@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/home/fabien/clawd/chat_automation/.venv/bin/python3
 """
 Perplexity CLI - Command-line interface for Perplexity
 """
@@ -10,9 +10,11 @@ import argparse
 import asyncio
 import sys
 from pathlib import Path
+from typing import List
 
 sys.path.insert(0, '/home/fabien/clawd')
 from chat_automation.perplexity import PerplexityAutomation
+from chat_automation.perplexity_conversations import PerplexityConversations, PerplexityConversation, PerplexitySpace
 from chat_automation.config import ChatAutomationConfig
 from chat_automation.verbose import log, set_verbose
 from chat_automation.cli_common import (
@@ -237,8 +239,8 @@ class PerplexityManager:
         if self._perplexity:
             try:
                 if keep_browser_open:
-                    await self._perplexity.stop()
-                    log("Disconnected")
+                    await self._perplexity.disconnect()
+                    log("Disconnected (browser still running)")
                 else:
                     await self._perplexity.close_browser()
                     log("Browser closed")
@@ -638,6 +640,621 @@ Tips:
             if self.chat:
                 await self.chat.close()
 
+    async def library(self, limit: int = 20):
+        """List conversations from perplexity.ai/library"""
+        from rich.table import Table
+
+        console.print("[bold]" + "=" * 70 + "[/bold]")
+        console.print("[bold]PERPLEXITY LIBRARY[/bold]")
+        console.print("[bold]" + "=" * 70 + "[/bold]\n")
+        console.print("[dim]Navigating to perplexity.ai/library...[/dim]\n")
+
+        manager = PerplexityManager()
+        conv_manager = PerplexityConversations(manager.config)
+
+        try:
+            conversations = await conv_manager.list_conversations(limit=limit)
+
+            if not conversations:
+                console.print("[yellow]No conversations found in library.[/yellow]")
+                console.print("[dim]Make sure you're logged in and have conversations.[/dim]")
+                return
+
+            table = Table(show_header=True, header_style="bold magenta")
+            table.add_column("#", width=4, justify="right")
+            table.add_column("Title", width=40)
+            table.add_column("Type", width=10)
+            table.add_column("ID", width=25)
+            table.add_column("Preview", width=30)
+
+            for i, conv in enumerate(conversations, 1):
+                preview = conv.preview[:40] + "..." if len(conv.preview) > 40 else conv.preview
+                type_icon = "[🔍]" if conv.type.value == "search" else "[💬]"
+                table.add_row(
+                    str(i),
+                    conv.title[:40] + "..." if len(conv.title) > 40 else conv.title,
+                    type_icon,
+                    conv.id,
+                    preview
+                )
+
+            console.print(table)
+            console.print(f"\n[dim]Found {len(conversations)} conversations[/dim]")
+            console.print("\n[cyan]Commands:[/cyan]")
+            console.print("  ./perplexity library               # List conversations (default)")
+            console.print("  ./perplexity library --limit 50    # Increase limit")
+            console.print("  ./perplexity open <id>             # Open a conversation")
+            console.print("  ./perplexity delete <id>           # Delete a conversation")
+            console.print("  ./perplexity spaces                # List spaces")
+
+        except Exception as e:
+            console.print(f"\n[red]Error: {e}[/red]")
+            import traceback
+            traceback.print_exc()
+        finally:
+            try:
+                await conv_manager.close()
+                await manager.close(keep_browser_open=True)
+            except Exception:
+                pass
+
+    async def spaces(self, limit: int = 20):
+        """List spaces from perplexity.ai/spaces"""
+        from rich.table import Table
+
+        console.print("[bold]" + "=" * 70 + "[/bold]")
+        console.print("[bold]PERPLEXITY SPACES[/bold]")
+        console.print("[bold]" + "=" * 70 + "[/bold]\n")
+        console.print("[dim]Navigating to perplexity.ai/spaces...[/dim]\n")
+
+        try:
+            manager = PerplexityManager()
+            conv_manager = PerplexityConversations(manager.config)
+
+            spaces = await conv_manager.list_spaces(limit=limit)
+
+            if not spaces:
+                console.print("[yellow]No spaces found.[/yellow]")
+                console.print("[dim]Create spaces at perplexity.ai/spaces to organize conversations.[/dim]")
+                return
+
+            table = Table(show_header=True, header_style="bold magenta")
+            table.add_column("#", width=4, justify="right")
+            table.add_column("Name", width=40)
+            table.add_column("Conversations", width=15, justify="right")
+            table.add_column("ID", width=25)
+            table.add_column("Description", width=35)
+
+            for i, space in enumerate(spaces, 1):
+                desc = (space.description[:32] + "..." if space.description and len(space.description) > 32 else space.description) if space.description else "-"
+                table.add_row(
+                    str(i),
+                    space.name[:40],
+                    str(space.conversation_count),
+                    space.id,
+                    desc
+                )
+
+            console.print(table)
+            console.print(f"\n[dim]Found {len(spaces)} spaces[/dim]")
+            console.print("\n[cyan]Commands:[/cyan]")
+            console.print("  ./perplexity spaces                    # List spaces (default)")
+            console.print("  ./perplexity spaces --limit 50        # Increase limit")
+            console.print("  ./perplexity space-open <id>          # Open a space")
+            console.print("  ./perplexity move <conv_id> <space_id> # Move conversation to space")
+
+        except Exception as e:
+            console.print(f"\n[red]Error: {e}[/red]")
+            import traceback
+            traceback.print_exc()
+        finally:
+            try:
+                await conv_manager.close()
+                await manager.close(keep_browser_open=True)
+            except Exception:
+                pass
+
+    async def delete_conversations(self, conversation_ids: List[str], interactive: bool = True):
+        """Delete conversations"""
+        if not conversation_ids:
+            console.print("[red]Error: No conversation IDs provided[/red]")
+            console.print("Usage: ./perplexity delete <id1> [id2] [id3]...")
+            return
+
+        if interactive:
+            console.print("[bold]" + "=" * 70 + "[/bold]")
+            console.print("[bold]DELETE CONVERSATIONS[/bold]")
+            console.print("[bold]" + "=" * 70 + "[/bold]\n")
+            console.print("[yellow]The following conversations will be DELETED:[/yellow]\n")
+            for conv_id in conversation_ids:
+                console.print(f"  - {conv_id}")
+            console.print("\n[red]This action cannot be undone![/red]")
+            confirm = input("\nProceed? (y/N): ")
+            if confirm.lower() != "y":
+                console.print("[dim]Cancelled.[/dim]")
+                return
+
+        try:
+            manager = PerplexityManager()
+            conv_manager = PerplexityConversations(manager.config)
+
+            try:
+                console.print("\n[bold]Deletion Results:[/bold]")
+                for conv_id in conversation_ids:
+                    success = await conv_manager.delete_conversation_via_api(conv_id)
+                    if success:
+                        console.print(f"  [green]✓[/green] {conv_id}")
+                    else:
+                        console.print(f"  [red]✗[/red] {conv_id}")
+            finally:
+                await conv_manager.close()
+                await manager.close(keep_browser_open=True)
+
+        except Exception as e:
+            console.print(f"\n[red]Error: {e}[/red]")
+            import traceback
+            traceback.print_exc()
+
+    async def move_conversations(self, conversation_ids: List[str], space_id: str):
+        """Move conversations to a space"""
+        if not conversation_ids:
+            console.print("[red]Error: No conversation IDs provided[/red]")
+            console.print("Usage: ./perplexity move <conv_id> [conv_id...] <space_id>")
+            return
+
+        if not space_id:
+            console.print("[red]Error: No space ID provided[/red]")
+            console.print("Usage: ./perplexity move <conv_id> [conv_id...] <space_id>")
+            return
+
+        console.print("[bold]" + "=" * 70 + "[/bold]")
+        console.print("[bold]MOVE CONVERSATIONS[/bold]")
+        console.print("[bold]" + "=" * 70 + "[/bold]\n")
+        console.print("Moving to space:")
+        console.print(f"  [cyan]{space_id}[/cyan]\n")
+        console.print("Conversations to move:")
+        for conv_id in conversation_ids:
+            console.print(f"  - {conv_id}")
+
+        try:
+            manager = PerplexityManager()
+            conv_manager = PerplexityConversations(manager.config)
+
+            try:
+                spaces = await conv_manager.list_spaces(limit=100)
+                space_names = {s.id: s.name for s in spaces}
+
+                if space_id in space_names:
+                    console.print(f"\n[dim]Target: {space_names[space_id]}[/dim]")
+
+                results = await conv_manager.move_to_space(conversation_ids, space_id)
+
+                console.print("\n[bold]Move Results:[/bold]")
+                for conv_id, success in results.items():
+                    if success:
+                        console.print(f"  [green]✓[/green] {conv_id} → {space_id}")
+                    else:
+                        console.print(f"  [red]✗[/red] {conv_id} → {space_id}")
+            finally:
+                await conv_manager.close()
+                await manager.close(keep_browser_open=True)
+
+        except Exception as e:
+            console.print(f"\n[red]Error: {e}[/red]")
+            import traceback
+            traceback.print_exc()
+
+    async def open_conversation(self, conversation_id: str):
+        """Open a conversation in browser"""
+        if not conversation_id:
+            console.print("[red]Error: No conversation ID provided[/red]")
+            return
+
+        try:
+            manager = PerplexityManager()
+            conv_manager = PerplexityConversations(manager.config)
+
+            try:
+                success = await conv_manager.open_conversation(conversation_id)
+
+                if success:
+                    console.print(f"[green]Opened conversation:[/green] {conversation_id}")
+                    console.print(f"[dim]URL: https://www.perplexity.ai/chat/{conversation_id}[/dim]")
+                else:
+                    console.print(f"[red]Failed to open conversation: {conversation_id}[/red]")
+            finally:
+                await conv_manager.close()
+                await manager.close(keep_browser_open=True)
+
+        except Exception as e:
+            console.print(f"\n[red]Error: {e}[/red]")
+
+    async def open_space(self, space_id: str):
+        """Open a space in browser"""
+        if not space_id:
+            console.print("[red]Error: No space ID provided[/red]")
+            return
+
+        try:
+            manager = PerplexityManager()
+            conv_manager = PerplexityConversations(manager.config)
+
+            try:
+                success = await conv_manager.open_space(space_id)
+
+                if success:
+                    console.print(f"[green]Opened space:[/green] {space_id}")
+                    console.print(f"[dim]URL: https://www.perplexity.ai/space/{space_id}[/dim]")
+                else:
+                    console.print(f"[red]Failed to open space: {space_id}[/red]")
+            finally:
+                await conv_manager.close()
+                await manager.close(keep_browser_open=True)
+
+        except Exception as e:
+            console.print(f"\n[red]Error: {e}[/red]")
+
+    async def interactive_select(self, title: str, items: List, key_attr: str, multi: bool = True):
+        """Interactive selector using prompt_toolkit checkbox dialog"""
+        from prompt_toolkit.shortcuts import checkboxlist_dialog, radiolist_dialog
+
+        if not items:
+            console.print("[yellow]No items to select[/yellow]")
+            return []
+
+        # Build dialog values: (key, display_text)
+        values = []
+        for item in items:
+            key = getattr(item, key_attr, '')
+            display = getattr(item, "title", str(item))
+            if len(display) > 60:
+                display = display[:57] + "..."
+            values.append((key, display))
+
+        if multi:
+            result = await checkboxlist_dialog(
+                title=title,
+                text="Press SPACE to select, ENTER to confirm:",
+                values=values,
+            ).run_async()
+        else:
+            result = await radiolist_dialog(
+                title=title,
+                text="Select one item:",
+                values=values,
+            ).run_async()
+
+        if result is None:
+            return []
+
+        # Convert selected keys to indices
+        if multi:
+            selected_keys = result
+        else:
+            selected_keys = [result] if result else []
+
+        indices = []
+        for i, item in enumerate(items):
+            key = getattr(item, key_attr, '')
+            if key in selected_keys:
+                indices.append(i)
+
+        return indices
+
+    async def manage_interactive(self):
+        """Interactive conversation manager with selectable list"""
+        from rich.panel import Panel
+
+        console.print(Panel.fit(
+            "[bold cyan]Perplexity Conversation Manager[/bold cyan]\n"
+            "[dim]Manage your conversations and spaces interactively[/dim]",
+            title="Party Mode"
+        ))
+        console.print()
+
+        manager = PerplexityManager()
+        conv_manager = PerplexityConversations(manager.config)
+
+        current_conversations = []
+        current_spaces = []
+        selected_conv_indices = []
+
+        while True:
+            try:
+                console.print("\n[bold]Main Menu:[/bold]")
+                console.print("  [1] Browse Conversations")
+                console.print("  [2] Browse Spaces")
+                console.print("  [3] Bulk Actions on Conversations")
+                console.print("  [q] Quit")
+
+                choice = console.input("\n[cyan]>[/cyan] ").strip().lower()
+
+                if choice == 'q' or choice == 'quit':
+                    break
+
+                elif choice == '1':
+                    console.print("\n[dim]Loading conversations...[/dim]")
+                    current_conversations = await conv_manager.list_conversations(limit=50)
+
+                    if not current_conversations:
+                        console.print("[yellow]No conversations found[/yellow]")
+                        continue
+
+                    indices = await self.interactive_select(
+                        "Conversations",
+                        current_conversations,
+                        key_attr="id"
+                    )
+
+                    if not indices:
+                        console.print("[dim]Cancelled[/dim]")
+                        continue
+
+                    console.print("\n[bold]Selected Conversations:[/bold]")
+                    for i in indices:
+                        conv = current_conversations[i]
+                        console.print(f"  - {conv.title[:50]} [{conv.id[:12]}...]")
+
+                    from prompt_toolkit.shortcuts import radiolist_dialog
+
+                    action_result = await radiolist_dialog(
+                        title="Action",
+                        text="Choose an action:",
+                        values=[
+                            ("open", "Open in browser"),
+                            ("delete", "Delete conversations"),
+                            ("back", "Back to menu"),
+                        ]
+                    ).run_async()
+
+                    if action_result == "open":
+                        for i in indices:
+                            await conv_manager.open_conversation(current_conversations[i].id)
+                            console.print(f"[green]Opened: {current_conversations[i].title[:40]}[/green]")
+                    elif action_result == "delete":
+                        console.print("[yellow]Deleting...[/yellow]")
+                        for i in indices:
+                            success = await conv_manager.delete_conversation_via_api(current_conversations[i].id)
+                            if success:
+                                console.print(f"[green]✓ Deleted: {current_conversations[i].title[:40]}[/green]")
+                            else:
+                                console.print(f"[red]✗ Failed: {current_conversations[i].title[:40]}[/red]")
+                        current_conversations = await conv_manager.list_conversations(limit=50)
+
+                elif choice == '2':
+                    console.print("\n[dim]Loading spaces...[/dim]")
+                    current_spaces = await conv_manager.list_spaces(limit=50)
+
+                    if not current_spaces:
+                        console.print("[yellow]No spaces found[/yellow]")
+                        continue
+
+                    indices = await self.interactive_select(
+                        "Spaces",
+                        current_spaces,
+                        key_attr="id"
+                    )
+
+                    if not indices:
+                        console.print("[dim]Cancelled[/dim]")
+                        continue
+
+                    from prompt_toolkit.shortcuts import radiolist_dialog
+
+                    action_result = await radiolist_dialog(
+                        title="Action",
+                        text="Choose an action:",
+                        values=[
+                            ("open", "Open in browser"),
+                            ("back", "Back to menu"),
+                        ]
+                    ).run_async()
+
+                    if action_result == "open":
+                        for i in indices:
+                            await conv_manager.open_space(current_spaces[i].id)
+                            console.print(f"[green]Opened: {current_spaces[i].name}[/green]")
+
+                elif choice == '3':
+                    if not current_conversations:
+                        console.print("[yellow]No conversations loaded. Go to option 1 first.[/yellow]")
+                        continue
+
+                    console.print("\n[dim]Select conversations to manage...[/dim]")
+                    indices = await self.interactive_select(
+                        "Select Conversations",
+                        current_conversations,
+                        key_attr="id"
+                    )
+
+                    if not indices:
+                        console.print("[dim]Cancelled[/dim]")
+                        continue
+
+                    from prompt_toolkit.shortcuts import radiolist_dialog
+
+                    action_result = await radiolist_dialog(
+                        title="Bulk Actions",
+                        text="Choose an action:",
+                        values=[
+                            ("delete", "Delete selected"),
+                            ("move", "Move to space..."),
+                            ("back", "Back"),
+                        ]
+                    ).run_async()
+
+                    if action_result == "delete":
+                        console.print("[yellow]Deleting...[/yellow]")
+                        for i in indices:
+                            success = await conv_manager.delete_conversation_via_api(current_conversations[i].id)
+                            if success:
+                                console.print(f"[green]✓ Deleted: {current_conversations[i].title[:40]}[/green]")
+                            else:
+                                console.print(f"[red]✗ Failed: {current_conversations[i].title[:40]}[/red]")
+                        current_conversations = await conv_manager.list_conversations(limit=50)
+
+                    elif action_result == "move":
+                        if not current_spaces:
+                            current_spaces = await conv_manager.list_spaces(limit=50)
+
+                        space_indices = await self.interactive_select(
+                            "Select Target Space",
+                            current_spaces,
+                            key_attr="id",
+                            multi=False
+                        )
+
+                        if space_indices:
+                            target_space = current_spaces[space_indices[0]]
+                            console.print(f"[dim]Moving to: {target_space.name}[/dim]")
+                            for i in indices:
+                                console.print(f"  [dim]Moving: {current_conversations[i].title[:40]}...[/dim]")
+                            console.print("[yellow]Move via API not yet implemented - please move manually in browser[/yellow]")
+
+            except KeyboardInterrupt:
+                console.print("\n[dim]Press Q to quit[/dim]")
+                continue
+            except EOFError:
+                break
+
+        await conv_manager.close()
+        await manager.close(keep_browser_open=True)
+        console.print("\n[dim]Goodbye![/dim]")
+
+    async def interactive_conversation_manager(self):
+        """Interactive conversation manager with selection mode"""
+        from rich.prompt import Prompt
+        from rich.table import Table
+
+        console.print("[bold cyan]Perplexity Conversation Manager[/bold cyan]")
+        console.print("[dim]Commands: /library /spaces /open <id> /delete <id> /move <id> <space> /exit /help[/dim]\n")
+
+        manager = PerplexityManager()
+        conv_manager = PerplexityConversations(manager.config)
+        selection_mode = False
+        selected_ids = []
+        current_spaces = []
+        current_conversations = []
+
+        while True:
+            try:
+                prompt_text = "[cyan]>[/cyan] "
+                user_input = Prompt.ask(prompt_text, default="")
+
+                if user_input.strip() == "/exit" or user_input.strip() == "":
+                    if selection_mode:
+                        selection_mode = False
+                        selected_ids = []
+                        console.print("[dim]Selection cleared.[/dim]")
+                        continue
+                    console.print("[dim]Goodbye![/dim]")
+                    break
+
+                elif user_input.strip() == "/library":
+                    console.print("\n[dim]Loading conversations from library...[/dim]\n")
+                    current_conversations = await conv_manager.list_conversations(limit=30)
+                    current_spaces = []
+
+                    if not current_conversations:
+                        console.print("[yellow]No conversations found in library.[/yellow]\n")
+                    else:
+                        table = Table(show_header=True, header_style="bold magenta")
+                        table.add_column("#", width=4, justify="right")
+                        table.add_column("Title", width=40)
+                        table.add_column("Type", width=10)
+                        table.add_column("ID", width=25)
+                        for i, conv in enumerate(current_conversations[:20], 1):
+                            type_icon = "🔍" if conv.type.value == "search" else "💬"
+                            table.add_row(str(i), conv.title[:38], type_icon, conv.id)
+                        console.print(table)
+                        console.print(f"\n[dim]Found {len(current_conversations)} conversations[/dim]")
+                        console.print("[dim]Use /open <id> to open a conversation[/dim]\n")
+                    selection_mode = False
+                    selected_ids = []
+
+                elif user_input.strip() == "/spaces":
+                    console.print("\n[dim]Loading spaces...[/dim]\n")
+                    current_spaces = await conv_manager.list_spaces(limit=20)
+                    current_conversations = []
+
+                    if not current_spaces:
+                        console.print("[yellow]No spaces found.[/yellow]\n")
+                    else:
+                        table = Table(show_header=True, header_style="bold magenta")
+                        table.add_column("#", width=4, justify="right")
+                        table.add_column("Name", width=40)
+                        table.add_column("Conversations", width=12, justify="right")
+                        table.add_column("ID", width=25)
+                        for i, space in enumerate(current_spaces, 1):
+                            table.add_row(str(i), space.name[:38], str(space.conversation_count), space.id)
+                        console.print(table)
+                        console.print(f"\n[dim]Found {len(current_spaces)} spaces[/dim]\n")
+                    selection_mode = False
+                    selected_ids = []
+
+                elif user_input.strip() == "/help":
+                    console.print("""
+[bold]Conversation Manager Commands:[/bold]
+  /library               Load conversations from library
+  /spaces                List all spaces
+  /open <id>             Open a conversation in browser
+  /delete <id> [id...]   Delete conversation(s)
+  /move <id> <space_id>  Move conversation to space
+  /exit                  Exit (clears selection if active)
+
+[bold]Tips:[/bold]
+  - Run /library to see your conversations with IDs
+  - Copy the ID from the table to use with /open /delete /move
+                    """)
+
+                elif user_input.strip().startswith("/open "):
+                    parts = user_input.strip().split(None, 1)
+                    if len(parts) > 1:
+                        conv_id = parts[1].strip()
+                        success = await conv_manager.open_conversation(conv_id)
+                        if success:
+                            console.print(f"[green]Opened: {conv_id}[/green]")
+                        else:
+                            console.print(f"[red]Failed to open: {conv_id}[/red]")
+
+                elif user_input.strip().startswith("/delete "):
+                    parts = user_input.strip().split(None, 1)
+                    if len(parts) > 1:
+                        ids_to_delete = parts[1].strip().split()
+                        for conv_id in ids_to_delete:
+                            success = await conv_manager.delete_conversation_via_api(conv_id)
+                            if success:
+                                console.print(f"[green]✓ Deleted: {conv_id}[/green]")
+                            else:
+                                console.print(f"[red]✗ Failed: {conv_id}[/red]")
+                        current_conversations = []
+
+                elif user_input.strip().startswith("/move "):
+                    parts = user_input.strip().split(None, 2)
+                    if len(parts) > 2:
+                        conv_ids = parts[1].strip().split()
+                        space_id = parts[2].strip()
+                        for conv_id in conv_ids:
+                            results = await conv_manager.move_to_space([conv_id], space_id)
+                            if results.get(conv_id):
+                                console.print(f"[green]✓ Moved: {conv_id} → {space_id}[/green]")
+                            else:
+                                console.print(f"[red]✗ Failed: {conv_id}[/red]")
+                        current_conversations = []
+
+                else:
+                    console.print(f"[yellow]Unknown command: {user_input}[/yellow]")
+                    console.print("[dim]Type /help for available commands[/dim]")
+
+            except KeyboardInterrupt:
+                console.print("\n[dim]Press /exit to quit[/dim]")
+                continue
+            except EOFError:
+                break
+
+        await conv_manager.close()
+        await manager.close(keep_browser_open=True)
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -654,6 +1271,11 @@ Examples:
   perplexity list                               # List conversations
   perplexity history                            # Show recent history
   perplexity continue perp_2024_02_10           # Continue a conversation
+  perplexity manage                             # Interactive UI with arrow keys & bulk select
+  perplexity library                            # List conversations from library
+  perplexity spaces                             # List spaces
+  perplexity delete <id>                       # Delete conversation
+  perplexity move <id> <space_id>              # Move to space
 
 Flags:
   -v, --verbose    Show debug output (connection status, etc.)
@@ -697,6 +1319,35 @@ Flags:
     continue_parser.add_argument('message', nargs='?', help='Message to send')
     continue_parser.add_argument('--output', '-o', help='Write response to file (markdown format)')
 
+    # Library
+    library_parser = subparsers.add_parser('library', help='List conversations from perplexity.ai/library')
+    library_parser.add_argument('--limit', '-l', type=int, default=20, help='Maximum number of conversations to list')
+
+    # Spaces
+    spaces_parser = subparsers.add_parser('spaces', help='List spaces from perplexity.ai/spaces')
+    spaces_parser.add_argument('--limit', '-l', type=int, default=20, help='Maximum number of spaces to list')
+
+    # Delete
+    delete_parser = subparsers.add_parser('delete', help='Delete conversations')
+    delete_parser.add_argument('conversation_ids', nargs='+', help='Conversation ID(s) to delete')
+    delete_parser.add_argument('--yes', '-y', action='store_true', help='Skip confirmation')
+
+    # Move
+    move_parser = subparsers.add_parser('move', help='Move conversations to a space')
+    move_parser.add_argument('conversation_ids', nargs='+', help='Conversation ID(s) to move')
+    move_parser.add_argument('space_id', help='Target space ID')
+
+    # Open conversation
+    open_parser = subparsers.add_parser('open', help='Open a conversation in browser')
+    open_parser.add_argument('conversation_id', help='Conversation ID to open')
+
+    # Open space
+    space_open_parser = subparsers.add_parser('space-open', help='Open a space in browser')
+    space_open_parser.add_argument('space_id', help='Space ID to open')
+
+    # Interactive conversation manager with keyboard navigation
+    manager_parser = subparsers.add_parser('manage', help='Interactive UI with arrow keys, space to select, bulk actions')
+
     args = parser.parse_args()
 
     if not args.command:
@@ -734,6 +1385,22 @@ Flags:
             asyncio.run(cli.chat_message(args.message, args.session_id, output_file))
         else:
             print("Error: Provide a message to continue")
+    elif args.command == 'library':
+        asyncio.run(cli.library(limit=args.limit))
+    elif args.command == 'spaces':
+        asyncio.run(cli.spaces(limit=args.limit))
+    elif args.command == 'delete':
+        asyncio.run(cli.delete_conversations(args.conversation_ids, interactive=not args.yes))
+    elif args.command == 'move':
+        conv_ids = args.conversation_ids[:-1]
+        space_id = args.conversation_ids[-1]
+        asyncio.run(cli.move_conversations(conv_ids, space_id))
+    elif args.command == 'open':
+        asyncio.run(cli.open_conversation(args.conversation_id))
+    elif args.command == 'space-open':
+        asyncio.run(cli.open_space(args.space_id))
+    elif args.command == 'manage':
+        asyncio.run(cli.manage_interactive())
 
 
 if __name__ == '__main__':
