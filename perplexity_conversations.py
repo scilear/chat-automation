@@ -183,19 +183,25 @@ class PerplexityConversations(BrowserAutomation):
 
             if result and result.get('success'):
                 import json
-                collections = json.loads(result.get('text', '[]'))
-                for coll in collections:
-                    space = PerplexitySpace(
-                        id=coll.get('uuid', ''),
-                        name=coll.get('title', 'Unnamed Space'),
-                        description=coll.get('description', ''),
-                        url=f"https://www.perplexity.ai/space/{coll.get('uuid', '')}",
-                        conversation_count=coll.get('thread_count', 0),
-                        created_at=coll.get('updated_datetime', '')
-                    )
-                    spaces.append(space)
+                try:
+                    collections = json.loads(result.get('text', '[]'))
+                    print(f"[DEBUG] Spaces API returned {len(collections)} collections")
+                    for coll in collections:
+                        space = PerplexitySpace(
+                            id=coll.get('uuid', ''),
+                            name=coll.get('title', 'Unnamed Space'),
+                            description=coll.get('description', ''),
+                            url=f"https://www.perplexity.ai/space/{coll.get('uuid', '')}",
+                            conversation_count=coll.get('thread_count', 0),
+                            created_at=coll.get('updated_datetime', '')
+                        )
+                        spaces.append(space)
+                except Exception as e:
+                    print(f"[DEBUG] Error parsing spaces: {e}")
+                    print(f"[DEBUG] Response text: {result.get('text', 'N/A')[:200]}")
             else:
-                log(f"Fetch error: {result.get('error', 'Unknown')}")
+                error = result.get('error', 'Unknown') if result else 'No result'
+                print(f"[DEBUG] Fetch error: {error}")
 
         except Exception as e:
             log(f"Error fetching spaces: {e}")
