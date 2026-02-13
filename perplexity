@@ -960,13 +960,13 @@ Tips:
         current_spaces = []
         selected_conv_indices = []
 
-        # Pre-load spaces at startup using GUI progress dialog
-        from prompt_toolkit.shortcuts import message_dialog
-        await message_dialog(
-            title="Loading",
-            text="Loading spaces..."
-        ).run_async()
+        # Pre-load spaces at startup (silently in background)
+        console.print("[dim]Loading spaces...[/dim]")
         current_spaces = await conv_manager.list_spaces(limit=50)
+        if current_spaces:
+            console.print(f"[green]✓ Loaded {len(current_spaces)} spaces[/green]")
+        else:
+            console.print("[yellow]No spaces found[/yellow]")
 
         while True:
             try:
@@ -982,11 +982,6 @@ Tips:
                     break
 
                 elif choice == '1':
-                    from prompt_toolkit.shortcuts import message_dialog
-                    await message_dialog(
-                        title="Loading",
-                        text="Loading conversations..."
-                    ).run_async()
                     current_conversations = await conv_manager.list_conversations(limit=50)
 
                     if not current_conversations:
@@ -1065,11 +1060,6 @@ Tips:
                         current_conversations = await conv_manager.list_conversations(limit=50)
 
                 elif choice == '2':
-                    from prompt_toolkit.shortcuts import message_dialog
-                    await message_dialog(
-                        title="Loading",
-                        text="Loading spaces..."
-                    ).run_async()
                     current_spaces = await conv_manager.list_spaces(limit=50)
 
                     if not current_spaces:
