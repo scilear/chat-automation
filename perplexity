@@ -943,7 +943,7 @@ Tips:
         return indices
 
     async def manage_interactive(self):
-        """Interactive conversation manager with selectable list"""
+        """Interactive conversation manager - goes directly to conversation selection"""
         from rich.panel import Panel
 
         console.print(Panel.fit(
@@ -956,11 +956,7 @@ Tips:
         manager = PerplexityManager()
         conv_manager = PerplexityConversations(manager.config)
 
-        current_conversations = []
-        current_spaces = []
-        selected_conv_indices = []
-
-        # Pre-load spaces at startup (silently in background)
+        # Load spaces and conversations at startup
         console.print("[dim]Loading spaces...[/dim]")
         current_spaces = await conv_manager.list_spaces(limit=50)
         if current_spaces:
@@ -970,194 +966,99 @@ Tips:
 
         while True:
             try:
-                console.print("\n[bold]Main Menu:[/bold]")
-                console.print("  [1] Browse Conversations")
-                console.print("  [2] Browse Spaces")
-                console.print("  [3] Bulk Actions on Conversations")
-                console.print("  [q] Quit")
+                # Load conversations each iteration (to get latest state)
+                console.print("[dim]Loading conversations...[/dim]")
+                current_conversations = await conv_manager.list_conversations(limit=50)
 
-                choice = console.input("\n[cyan]>[/cyan] ").strip().lower()
-
-                if choice == 'q' or choice == 'quit':
+                if not current_conversations:
+                    console.print("[yellow]No conversations found[/yellow]")
                     break
 
-                elif choice == '1':
-                    current_conversations = await conv_manager.list_conversations(limit=50)
+                indices = await self.interactive_select(
+                    "Conversations",
+                    current_conversations,
+                    key_attr="id"
+                )
 
-                    if not current_conversations:
-                        console.print("[yellow]No conversations found[/yellow]")
-                        continue
+                if not indices:
+                    break
 
-                    indices = await self.interactive_select(
-                        "Conversations",
-                        current_conversations,
-                        key_attr="id"
-                    )
+                console.print("\n[bold]Selected Conversations:[/bold]")
+                for i in indices:
+                    conv = current_conversations[i]
+                    console.print(f"  - {conv.title[:50]} [{conv.id[:12]}...]")
 
-                    if not indices:
-                        console.print("[dim]Cancelled[/dim]")
-                        continue
+                from prompt_toolkit.shortcuts import radiolist_dialog
 
-                    console.print("\n[bold]Selected Conversations:[/bold]")
+                action_result = await radiolist_dialog(
+                    title="Action",
+                    text="Choose an action:",
+                    values=[
+                        ("open", "Open in browser"),
+                        ("move", "Move to space..."),
+                        ("delete", "Delete conversations"),
+                        ("refresh", "Refresh list"),
+                        ("quit", "Quit"),
+                    ]
+                ).run_async()
+
+                if action_result == "open":
                     for i in indices:
-                        conv = current_conversations[i]
-                        console.print(f"  - {conv.title[:50]} [{conv.id[:12]}...]")
-
-                    from prompt_toolkit.shortcuts import radiolist_dialog
-
-                    action_result = await radiolist_dialog(
-                        title="Action",
-                        text="Choose an action:",
-                        values=[
-                            ("open", "Open in browser"),
-                            ("move", "Move to space..."),
-                            ("delete", "Delete conversations"),
-                            ("back", "Back to menu"),
-                        ]
-                    ).run_async()
-
-                    if action_result == "open":
-                        for i in indices:
-                            await conv_manager.open_conversation(current_conversations[i].id)
-                            console.print(f"[green]Opened: {current_conversations[i].title[:40]}[/green]")
-                    elif action_result == "move":
-                        if not current_spaces:
-                            from prompt_toolkit.shortcuts import message_dialog
-                            await message_dialog(
-                                title="No Spaces",
-                                text="No spaces available. Create a space in Perplexity first."
-                            ).run_async()
-                            continue
-                        
-                        space_indices = await self.interactive_select(
-                            "Select Target Space",
-                            current_spaces,
-                            key_attr="id",
-                            multi=False
-                        )
-                        
-                        if space_indices:
-                            target_space = current_spaces[space_indices[0]]
-                            console.print(f"[yellow]Moving {len(indices)} conversation(s) to {target_space.name}...[/yellow]")
-                            for i in indices:
-                                success = await conv_manager.move_conversation_to_space_via_api(
-                                    current_conversations[i].id,
-                                    target_space.id
-                                )
-                                if success:
-                                    console.print(f"[green]✓ Moved: {current_conversations[i].title[:40]}[/green]")
-                                else:
-                                    console.print(f"[red]✗ Failed: {current_conversations[i].title[:40]}[/red]")
-                            console.print(f"[dim]Refresh conversations to see updated spaces[/dim]")
-                    elif action_result == "delete":
-                        console.print("[yellow]Deleting...[/yellow]")
-                        for i in indices:
-                            success = await conv_manager.delete_conversation_via_api(current_conversations[i].id)
-                            if success:
-                                console.print(f"[green]✓ Deleted: {current_conversations[i].title[:40]}[/green]")
-                            else:
-                                console.print(f"[red]✗ Failed: {current_conversations[i].title[:40]}[/red]")
-                        current_conversations = await conv_manager.list_conversations(limit=50)
-
-                elif choice == '2':
-                    current_spaces = await conv_manager.list_spaces(limit=50)
-
+                        await conv_manager.open_conversation(current_conversations[i].id)
+                        console.print(f"[green]Opened: {current_conversations[i].title[:40]}[/green]")
+                    # Continue to refresh conversations
+                elif action_result == "move":
                     if not current_spaces:
-                        console.print("[yellow]No spaces found[/yellow]")
+                        from prompt_toolkit.shortcuts import message_dialog
+                        await message_dialog(
+                            title="No Spaces",
+                            text="No spaces available. Create a space in Perplexity first."
+                        ).run_async()
                         continue
-
-                    indices = await self.interactive_select(
-                        "Spaces",
+                    
+                    space_indices = await self.interactive_select(
+                        "Select Target Space",
                         current_spaces,
-                        key_attr="id"
+                        key_attr="id",
+                        multi=False
                     )
-
-                    if not indices:
-                        console.print("[dim]Cancelled[/dim]")
-                        continue
-
-                    from prompt_toolkit.shortcuts import radiolist_dialog
-
-                    action_result = await radiolist_dialog(
-                        title="Action",
-                        text="Choose an action:",
-                        values=[
-                            ("open", "Open in browser"),
-                            ("back", "Back to menu"),
-                        ]
-                    ).run_async()
-
-                    if action_result == "open":
+                    
+                    if space_indices:
+                        target_space = current_spaces[space_indices[0]]
+                        console.print(f"[yellow]Moving {len(indices)} conversation(s) to {target_space.name}...[/yellow]")
                         for i in indices:
-                            await conv_manager.open_space(current_spaces[i].id)
-                            console.print(f"[green]Opened: {current_spaces[i].name}[/green]")
-
-                elif choice == '3':
-                    if not current_conversations:
-                        console.print("[yellow]No conversations loaded. Go to option 1 first.[/yellow]")
-                        continue
-
-                    console.print("\n[dim]Select conversations to manage...[/dim]")
-                    indices = await self.interactive_select(
-                        "Select Conversations",
-                        current_conversations,
-                        key_attr="id"
-                    )
-
-                    if not indices:
-                        console.print("[dim]Cancelled[/dim]")
-                        continue
-
-                    from prompt_toolkit.shortcuts import radiolist_dialog
-
-                    action_result = await radiolist_dialog(
-                        title="Bulk Actions",
-                        text="Choose an action:",
-                        values=[
-                            ("delete", "Delete selected"),
-                            ("move", "Move to space..."),
-                            ("back", "Back"),
-                        ]
-                    ).run_async()
-
-                    if action_result == "delete":
-                        console.print("[yellow]Deleting...[/yellow]")
-                        for i in indices:
-                            success = await conv_manager.delete_conversation_via_api(current_conversations[i].id)
+                            success = await conv_manager.move_conversation_to_space_via_api(
+                                current_conversations[i].id,
+                                target_space.id
+                            )
                             if success:
-                                console.print(f"[green]✓ Deleted: {current_conversations[i].title[:40]}[/green]")
+                                console.print(f"[green]✓ Moved: {current_conversations[i].title[:40]}[/green]")
                             else:
                                 console.print(f"[red]✗ Failed: {current_conversations[i].title[:40]}[/red]")
-                        current_conversations = await conv_manager.list_conversations(limit=50)
-
-                    elif action_result == "move":
-                        if not current_spaces:
-                            current_spaces = await conv_manager.list_spaces(limit=50)
-
-                        space_indices = await self.interactive_select(
-                            "Select Target Space",
-                            current_spaces,
-                            key_attr="id",
-                            multi=False
-                        )
-
-                        if space_indices:
-                            target_space = current_spaces[space_indices[0]]
-                            console.print(f"[yellow]Moving {len(indices)} conversation(s) to {target_space.name}...[/yellow]")
-                            for i in indices:
-                                success = await conv_manager.move_conversation_to_space_via_api(
-                                    current_conversations[i].id,
-                                    target_space.id
-                                )
-                                if success:
-                                    console.print(f"[green]✓ Moved: {current_conversations[i].title[:40]}[/green]")
-                                else:
-                                    console.print(f"[red]✗ Failed: {current_conversations[i].title[:40]}[/red]")
-                            console.print(f"[dim]Refresh conversations to see updated spaces[/dim]")
+                        console.print(f"[dim]Refresh conversations to see updated spaces[/dim]")
+                    # Continue to refresh conversations
+                elif action_result == "delete":
+                    console.print("[yellow]Deleting...[/yellow]")
+                    for i in indices:
+                        success = await conv_manager.delete_conversation_via_api(current_conversations[i].id)
+                        if success:
+                            console.print(f"[green]✓ Deleted: {current_conversations[i].title[:40]}[/green]")
+                        else:
+                            console.print(f"[red]✗ Failed: {current_conversations[i].title[:40]}[/red]")
+                    # Continue to refresh conversations automatically after delete
+                elif action_result == "refresh":
+                    # Just continue to reload
+                    pass
+                elif action_result == "quit":
+                    break
 
             except KeyboardInterrupt:
-                console.print("\n[dim]Press Q to quit[/dim]")
-                continue
+                break
+            except EOFError:
+                break
+
+            except KeyboardInterrupt:
+                break
             except EOFError:
                 break
 
