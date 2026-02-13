@@ -260,21 +260,17 @@ class PerplexityConversations(BrowserAutomation):
             print(f"[DEBUG] Attempting to delete conversation: {conversation_id}")
             await self.ensure_connection()
 
-            # Navigate to the conversation page first to ensure proper auth context
-            await self.goto(f"https://www.perplexity.ai/chat/{conversation_id}")
-            await asyncio.sleep(1)
-
-            result = await self.page.evaluate('''async (thread_id) => {
+            result = await self.page.evaluate('''async (entry_uuid) => {
                 try {
                     const response = await fetch(
-                        "https://www.perplexity.ai/rest/thread/delete",
+                        "https://www.perplexity.ai/rest/thread/delete_thread_by_entry_uuid?version=2.18&source=default",
                         {
                             method: "DELETE",
                             headers: { 
                                 "Content-Type": "application/json",
                                 "Accept": "application/json"
                             },
-                            body: JSON.stringify({ thread_id: thread_id })
+                            body: JSON.stringify({ entry_uuid: entry_uuid, read_write_token: "" })
                         }
                     );
                     const responseText = await response.text();
