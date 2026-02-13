@@ -960,6 +960,14 @@ Tips:
         current_spaces = []
         selected_conv_indices = []
 
+        # Pre-load spaces at startup using GUI progress dialog
+        from prompt_toolkit.shortcuts import message_dialog
+        await message_dialog(
+            title="Loading",
+            text="Loading spaces..."
+        ).run_async()
+        current_spaces = await conv_manager.list_spaces(limit=50)
+
         while True:
             try:
                 console.print("\n[bold]Main Menu:[/bold]")
@@ -974,7 +982,11 @@ Tips:
                     break
 
                 elif choice == '1':
-                    console.print("\n[dim]Loading conversations...[/dim]")
+                    from prompt_toolkit.shortcuts import message_dialog
+                    await message_dialog(
+                        title="Loading",
+                        text="Loading conversations..."
+                    ).run_async()
                     current_conversations = await conv_manager.list_conversations(limit=50)
 
                     if not current_conversations:
@@ -1015,7 +1027,12 @@ Tips:
                             console.print(f"[green]Opened: {current_conversations[i].title[:40]}[/green]")
                     elif action_result == "move":
                         if not current_spaces:
-                            current_spaces = await conv_manager.list_spaces(limit=50)
+                            from prompt_toolkit.shortcuts import message_dialog
+                            await message_dialog(
+                                title="No Spaces",
+                                text="No spaces available. Create a space in Perplexity first."
+                            ).run_async()
+                            continue
                         
                         space_indices = await self.interactive_select(
                             "Select Target Space",
@@ -1048,7 +1065,11 @@ Tips:
                         current_conversations = await conv_manager.list_conversations(limit=50)
 
                 elif choice == '2':
-                    console.print("\n[dim]Loading spaces...[/dim]")
+                    from prompt_toolkit.shortcuts import message_dialog
+                    await message_dialog(
+                        title="Loading",
+                        text="Loading spaces..."
+                    ).run_async()
                     current_spaces = await conv_manager.list_spaces(limit=50)
 
                     if not current_spaces:
