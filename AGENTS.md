@@ -1,126 +1,87 @@
-# Agent Guidelines - Chat Automation
+# AGENTS.md - Agent Guidelines and Conventions
 
-Browser automation framework for ChatGPT and other AI chat services with persistent sessions.
+---
 
-## Build / Test Commands
+## Chat Automation Framework - Coding & Workflow Agent Handbook
 
-```bash
-# Setup (run once)
-bash setup.sh
+This file is intended for agentic coding assistants and workflow/module builders operating in this repository. It includes build/test/lint instructions, code style/conventions, and agent persona activation rules for Workflow and Module Builder agents.
 
-# Activate environment
-source .venv/bin/activate
+---
 
-# Install dependencies
-pip install -r requirements.txt
-
-# Install Playwright browsers
-playwright install chromium
-
-# Run a single test
-python -m pytest examples/test_chatgpt.py -v
-
-# Python syntax check
-python -m py_compile chat_automation/*.py
-
-# Type checking (if mypy installed)
-python -m mypy chat_automation/
-
-# Run an example
-python examples/interactive_chat.py
-```
-
-## Dependencies
-
-### External Tools
-
-| Tool | Purpose | Install |
-|------|---------|---------|
-| **fzf** | Interactive fuzzy finder for CLI menus | `./install_dependencies.sh` or `apt install fzf` |
-| **Playwright** | Browser automation | `playwright install chromium` |
-
-### Interactive Selectors
-
-Use fzf for interactive selection in CLI tools:
-
-```python
-async def interactive_select(self, title: str, items: List, key_attr: str, multi: bool = True):
-    """Interactive selector using fzf"""
-    import subprocess
-    
-    lines = []
-    for item in items:
-        key = getattr(item, key_attr, '')
-        display = getattr(item, "title", str(item))
-        lines.append(f"{display}\t{key}")
-    
-    proc = subprocess.Popen(
-        ["fzf", "--multi", "--header", title],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        text=True
-    )
-    stdout, _ = proc.communicate("\n".join(lines))
-    # Parse selected items from stdout...
-```
-
-## Browser Daemon
-
-Keep browser running for instant CLI connections:
+## Build / Test / Lint Commands
 
 ```bash
-python browser_daemon.py start   # Start daemon
-python browser_daemon.py status  # Check status
-python browser_daemon.py stop    # Stop daemon
+# Initial Setup
+bash setup.sh                            # One-time venv/environment setup
+source .venv/bin/activate                # Activate Python environment
+pip install -r requirements.txt          # Install dependencies
+playwright install chromium              # Install browser for automation
+
+# Run All Tests
+python -m pytest -v                      # Run all tests (verbose)
+
+# Run a Single Test
+python -m pytest examples/test_chatgpt.py -v    # Run specific test
+python examples/interactive_chat.py             # Demo interactive chat
+python examples/send_message.py                 # Demo single message
+
+# Lint/Syntax Check
+python -m py_compile chat_automation/*.py       # Syntax check
+
+# Type Checking (optional)
+python -m mypy chat_automation/                 # Type check
+
+# Example Usage
+python examples/interactive_chat.py             # Interactive chat example
 ```
 
-## Code Style Guidelines
+### Dependencies
+- Python >= 3.10
+- playwright>=1.40.0
+- rich>=13.0.0
+- prompt_toolkit>=3.0.0
+- fzf (interactive CLI fuzzy finder)
+
+Install fzf via `./install_dependencies.sh` or `apt install fzf`.
+
+---
+
+## Code Style & Conventions
 
 ### Imports
-Order in three groups separated by blank lines:
-1. Standard library
-2. Third-party
-3. Local
+- Group imports by origin: standard library, third-party, local.
+- Separate each group by a blank line.
 
 ```python
-import asyncio
-import json
-from datetime import datetime
-from typing import Optional, List, Dict, Any
-from dataclasses import dataclass
+import os
+import sys
 
 from playwright.async_api import Page, Browser
 
 from .base import BrowserAutomation
-from .config import ChatAutomationConfig
 ```
 
+### Formatting
+- Line length guideline: ~100 characters, not enforced strictly.
+- Indentation: 4 spaces.
+- Use double quotes for strings unless otherwise required.
+
 ### Type Hints
-Use full type hints for all function signatures:
+- Use full type hints for all function signatures.
 
 ```python
 async def send_message(self, message: str, wait_for_response: bool = True) -> str:
-    ...
-
 def get_history(self) -> List[Dict[str, Any]]:
-    ...
-
-async def find_textarea(self) -> Optional[PageElement]:
-    ...
 ```
 
 ### Naming Conventions
-- **Classes**: `PascalCase` (`ChatManager`, `ChatGPTAutomation`)
-- **Functions/Variables**: `snake_case` (`send_message`, `user_data_dir`)
-- **Constants**: `UPPER_SNAKE_CASE` (`DEFAULT_CONFIG`, `PID_FILE`)
-- **Private methods**: Leading underscore (`_ensure_browser`, `_is_browser_alive`)
+- Classes: `PascalCase` (e.g. `ChatManager`, `WorkflowBuilder`)
+- Functions/variables: `snake_case` (e.g. `send_message`, `user_data_dir`)
+- Constants: `UPPER_SNAKE_CASE` (`DEFAULT_CONFIG`)
+- Private methods: prefixed with underscore (`_ensure_browser`)
 
-### Formatting
-- Line length: ~100 characters (practical, not strict)
-- Indentation: 4 spaces
-- Use double quotes for strings
-
-### Dataclasses for Structured Data
+### Dataclasses
+- Use `dataclasses` for structured API objects (messages, conversations, spaces).
 
 ```python
 @dataclass
@@ -128,140 +89,127 @@ class Message:
     role: str
     content: str
     timestamp: str
-
-@dataclass
-class Conversation:
-    id: str
-    title: str
-    messages: List[Message]
-    created_at: str
-    updated_at: str
-    url: Optional[str] = None
 ```
 
 ### Async/Await Patterns
-- Async for all I/O and browser operations
-- Provide sync wrapper (`SyncChatManager`) for convenience
-- Use context managers for cleanup:
+- Use async for all browser and I/O operations.
+- Sync wrapper classes available for convenience (e.g. `SyncChatManager`).
+- Prefer context managers for resource cleanup.
 
 ```python
 async with ChatManager() as chat:
-    response = await chat.send("Hello")
+    response = await chat.send("Hi")
 
 with SyncChatManager() as chat:
-    response = chat.send("Hello")
+    response = chat.send("Hi")
 ```
+
+---
 
 ### Error Handling
-Use broad `try/except Exception` with meaningful messages. Return error strings or `False`/`None`:
+- Use broad `try/except Exception:` with well-formed error messages.
+- Return `False`, `None`, or descriptive strings on failure.
+- Provide verbose logging for API/network failures and cache fallback.
 
 ```python
-async def send_message(self, message: str, max_retries: int = 3) -> bool:
-    for attempt in range(max_retries):
-        try:
-            element = await self.find_textarea()
-            if not element:
-                print(f"Attempt {attempt + 1}: Could not find chat input!")
-                await asyncio.sleep(2)
-                continue
-            await element.fill(message)
-            return True
-        except Exception as e:
-            print(f"Attempt {attempt + 1} error: {e}")
-            if attempt < max_retries - 1:
-                await asyncio.sleep(3)
-    return False
+try:
+    ...
+except Exception as e:
+    print(f"Error occured: {e}")
+    return None
 ```
 
-### Browser Automation Patterns
-
-Multiple fallback selectors for UI elements:
+### Automation Patterns
+- Use selectors with fallback for UI elements.
+- Health check browser state (`_is_browser_alive`).
 
 ```python
-selectors = [
-    '#prompt-textarea',
-    'div[contenteditable="true"]',
-    '[data-testid="chat-input"]',
-]
-
+selectors = ['#prompt-textarea', 'div[contenteditable="true"]', '[data-testid="chat-input"]']
 for selector in selectors:
     element = await self.page.query_selector(selector)
     if element:
         return element
 ```
-
-Health checks for browser state:
-
-```python
-async def _is_browser_alive(self) -> bool:
-    try:
-        await self._chatgpt.page.evaluate("1 + 1")
-        return True
-    except Exception as e:
-        print(f"Browser check failed: {e}")
-        return False
-```
+- Use disk caching for spaces/conversations, with clear fallback logic if API fails.
 
 ### Configuration
-Use dataclass factory methods:
+- Use factory methods for config dataclasses when applicable.
 
 ```python
 @dataclass
 class ChatAutomationConfig:
-    headless: bool = False
-    browser_type: str = "chromium"
-    timeout: int = 30000
-    user_data_dir: Optional[str] = None
-
+    ...
     @classmethod
     def brave_automation(cls) -> "ChatAutomationConfig":
-        automation_dir = os.path.expanduser("~/.config/BraveSoftware/Brave-Automation")
-        return cls(
-            headless=False,
-            browser_type="chromium",
-            browser_channel="brave",
-            user_data_dir=automation_dir,
-        )
+        ...
 ```
+
+---
+
+## Workflow & Module Builder Agent Activation Rules
+
+### Workflow Builder Agent (Wendy)
+- Loads persona from `_bmad/bmb/agents/workflow-builder.md`
+- Loads and reads `_bmad/bmb/config.yaml` on activation - must verify config
+- Communicates in `{communication_language}` from config
+- Displays menu items as dictated by activation/Menu section. Waits for user input.
+- Follows menu-handler instructions for exec/data/validate actions.
+- Principle: Efficient, reliable, maintainable workflows; robust error handling; documentation; testing.
+- Stay in character until exit selected.
+
+### Module Builder Agent (Morgan)
+- Loads persona from `_bmad/bmb/agents/module-builder.md`
+- Loads and reads `_bmad/bmb/config.yaml` on activation - must verify config
+- Communicates in `{communication_language}` from config
+- Displays menu items as dictated by activation/Menu section. Waits for user input.
+- Follows menu-handler instructions for exec/data/validate actions.
+- Principle: Modules must be self-contained but integrate seamlessly; solve business problems; document and exemplify; plan for growth; balance innovation and proven patterns.
+- Stay in character until exit selected.
+
+#### Menu-handlers (`<menu-handlers>`)
+- When menu item or handler has: `exec="path/to/file.md"`, read the file fully and follow instructions within.
+- If handler has `data="some/path/data-foo.md"`, pass that data as context.
+- Display menu/help as specified; always communicate in config language unless overruled by persona.
+
+---
 
 ## File Structure
 
 ```
 chat_automation/
-├── __init__.py              # Public API exports
-├── base.py                  # Base BrowserAutomation class (CDP support)
-├── chatgpt.py               # ChatGPT-specific implementation
-├── manager.py               # ChatManager, SyncChatManager
-├── config.py                # Configuration dataclasses
-├── conversation.py          # Conversation management
-├── browser_daemon.py        # Background browser daemon
-└── examples/                # Usage examples
+├── __init__.py
+├── manager.py
+├── chatgpt.py
+├── base.py
+├── config.py
+├── conversation.py
+├── browser_daemon.py
+├── perplexity_conversations.py
+├── perplexity_spaces_cache.py
+├── cli_common.py
+├── verbose.py
+├── examples/
+└── tests/
 ```
 
-## API Overview
-
-```python
-# Async - high level
-chat = ChatManager()
-response = await chat.send("Hello")
-await chat.close()
-
-# Sync - simpler API
-with SyncChatManager() as chat:
-    response = chat.send("Hello")
-
-# Low-level - direct browser control
-config = ChatAutomationConfig.brave_automation()
-async with ChatGPTAutomation(config) as chatgpt:
-    await chatgpt.goto("https://chatgpt.com")
-    response = await chatgpt.chat("Hello")
-```
+---
 
 ## Key Paths
 
 | Path | Purpose |
 |------|---------|
-| `~/.config/BraveSoftware/Brave-Automation/` | Persistent browser profile |
-| `~/.chat_automation/conversations/` | Saved conversation JSON files |
-| `~/.chat_automation/browser_cdp.json` | CDP endpoint for reconnection |
-| `~/.chat_automation/browser_daemon.pid` | Daemon process ID |
+| ~/.config/BraveSoftware/Brave-Automation/ | Persistent browser profile |
+| ~/.chat_automation/conversations/         | Saved conversation JSON files |
+| ~/.chat_automation/browser_cdp.json       | CDP endpoint for reconnection |
+| ~/.chat_automation/browser_daemon.pid     | Daemon process ID |
+| ~/.chat_automation/perplexity_spaces_cache.json | Disk cache for perplexity spaces |
+
+---
+
+## Agent Persona Activation (BMAD/BMB)
+- Activate workflow/module builder agents per the .opencode and _bmad/agent instructions.
+- Load configuration YAML; never proceed unless config is present.
+- Always display menu and help according to agent rules.
+- Never execute menu items automatically; user input required.
+
+---

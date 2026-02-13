@@ -961,8 +961,11 @@ Tips:
         current_spaces = await conv_manager.list_spaces(limit=50)
         if current_spaces:
             console.print(f"[green]✓ Loaded {len(current_spaces)} spaces[/green]")
+            if hasattr(conv_manager, 'log') and 'cached' in getattr(conv_manager, 'log', ''):
+                console.print("[yellow]Warning: Using cached spaces. API failed.[/yellow]")
         else:
             console.print("[yellow]No spaces found[/yellow]")
+            console.print("[yellow]Warning: No cached spaces available.[/yellow]")
 
         show_unspaced_only = True  # Default: show only conversations not in spaces
         current_offset = 0

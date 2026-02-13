@@ -17,6 +17,7 @@ from enum import Enum
 from .base import BrowserAutomation
 from .config import ChatAutomationConfig
 from .verbose import log
+from .perplexity_spaces_cache import save_spaces_cache, load_spaces_cache
 
 
 class ConversationType(Enum):
@@ -190,11 +191,16 @@ class PerplexityConversations(BrowserAutomation):
             }
             ''', arg=limit)
 
+            import traceback
+            log(f"[Spaces] Fetch result: {result}")
+
             if result and result.get('success'):
                 import json
                 try:
                     collections = json.loads(result.get('text', '[]'))
+                    log(f"[Spaces] Loaded {len(collections)} spaces.")
                     for coll in collections:
+                        log(f"[Spaces] - {coll.get('title', 'Unnamed Space')}: {coll.get('uuid')}")
                         space = PerplexitySpace(
                             id=coll.get('uuid', ''),
                             name=coll.get('title', 'Unnamed Space'),
@@ -205,11 +211,26 @@ class PerplexityConversations(BrowserAutomation):
                         )
                         spaces.append(space)
                 except Exception as e:
-                    log(f"Error parsing spaces: {e}")
-
+                    log(f"[Spaces] Error parsing spaces: {e}\n{traceback.format_exc()}")
+            else:
+                error = result.get('error', 'Unknown') if result else 'No result'
+                log(f"[Spaces] API fetch error: {error}, status={result.get('status')}\nFull result: {result}")
         except Exception as e:
-            log(f"Error fetching spaces: {e}")
-
+            log(f"[Spaces] Exception during space load: {e}\n{traceback.format_exc()}")
+        if len(spaces) > 0 and result and result.get('success'):
+            try:
+                save_spaces_cache(spaces)
+                log(f"[Spaces] Cache updated with {len(spaces)} spaces.")
+            except Exception as e:
+                log(f"[Spaces] Cache update failed: {e}")
+        elif len(spaces) == 0:
+            cached_items = load_spaces_cache()
+            if cached_items:
+                log("[Spaces] API failed, using cached spaces!")
+                spaces = [PerplexitySpace(**c) for c in cached_items]
+            else:
+                log("[Spaces] API failed, no cached spaces available!")
+        log(f"[Spaces] Final spaces count: {len(spaces)}")
         return spaces
 
     async def list_conversations(self, limit: int = 30, offset: int = 0, unspaced_only: bool = False) -> List[PerplexityConversation]:
