@@ -1106,10 +1106,17 @@ Tips:
 
                         if space_indices:
                             target_space = current_spaces[space_indices[0]]
-                            console.print(f"[dim]Moving to: {target_space.name}[/dim]")
+                            console.print(f"[yellow]Moving {len(indices)} conversation(s) to {target_space.name}...[/yellow]")
                             for i in indices:
-                                console.print(f"  [dim]Moving: {current_conversations[i].title[:40]}...[/dim]")
-                            console.print("[yellow]Move via API not yet implemented - please move manually in browser[/yellow]")
+                                success = await conv_manager.move_conversation_to_space_via_api(
+                                    current_conversations[i].id,
+                                    target_space.id
+                                )
+                                if success:
+                                    console.print(f"[green]✓ Moved: {current_conversations[i].title[:40]}[/green]")
+                                else:
+                                    console.print(f"[red]✗ Failed: {current_conversations[i].title[:40]}[/red]")
+                            console.print(f"[dim]Refresh conversations to see updated spaces[/dim]")
 
             except KeyboardInterrupt:
                 console.print("\n[dim]Press Q to quit[/dim]")

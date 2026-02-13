@@ -295,3 +295,50 @@ class PerplexityConversations(BrowserAutomation):
         except Exception as e:
             log(f"Error deleting conversation: {e}")
             return False
+
+    async def move_conversation_to_space_via_api(self, conversation_id: str, space_id: str) -> bool:
+        """Move a conversation to a space via browser fetch API"""
+        try:
+            print(f"[DEBUG] Attempting to move conversation {conversation_id} to space {space_id}")
+            await self.ensure_connection()
+
+            result = await self.page.evaluate('''async ([entry_uuid, new_collection_uuid]) => {
+                try {
+                    const response = await fetch(
+                        "https://www.perplexity.ai/rest/collections/upsert_thread_collection?version=2.18&source=default",
+                        {
+                            method: "POST",
+                            headers: { 
+                                "Content-Type": "application/json",
+                                "Accept": "application/json"
+                            },
+                            body: JSON.stringify({ 
+                                new_collection_uuid: new_collection_uuid,
+                                entry_uuid: entry_uuid,
+                                return_collection: false,
+                                return_thread: false
+                            })
+                        }
+                    );
+                    const responseText = await response.text();
+                    if (response.ok) {
+                        return { success: true, response: responseText };
+                    }
+                    return { success: false, error: "HTTP " + response.status + ": " + responseText };
+                } catch (e) {
+                    return { success: false, error: e.message };
+                }
+            }
+            ''', arg=[conversation_id, space_id])
+
+            if result and result.get('success'):
+                log(f"Moved conversation {conversation_id} to space {space_id}")
+                return True
+            else:
+                error_msg = result.get('error', 'Unknown') if result else 'No result'
+                print(f"[ERROR] Move failed for {conversation_id} to {space_id}: {error_msg}")
+                return False
+
+        except Exception as e:
+            log(f"Error moving conversation: {e}")
+            return False
