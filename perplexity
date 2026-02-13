@@ -906,7 +906,8 @@ Tips:
         values = []
         for item in items:
             key = getattr(item, key_attr, '')
-            display = getattr(item, "title", str(item))
+            # Try title first (conversations), then name (spaces), then str(item)
+            display = getattr(item, "title", None) or getattr(item, "name", None) or str(item)
             if len(display) > 60:
                 display = display[:57] + "..."
             values.append((key, display))
