@@ -253,3 +253,39 @@ class PerplexityConversations(BrowserAutomation):
     def is_in_selection_mode(self) -> bool:
         """Check if selection mode is active"""
         return self._selection_state.selection_mode
+
+    async def delete_conversation_via_api(self, conversation_id: str) -> bool:
+        """Delete a conversation via browser fetch API"""
+        try:
+            await self.ensure_connection()
+
+            result = await self.page.evaluate('''async (thread_id) => {
+                try {
+                    const response = await fetch(
+                        "https://www.perplexity.ai/rest/thread/delete",
+                        {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ thread_id: thread_id })
+                        }
+                    );
+                    if (response.ok) {
+                        return { success: true };
+                    }
+                    return { success: false, error: "HTTP " + response.status };
+                } catch (e) {
+                    return { success: false, error: e.message };
+                }
+            }
+            ''', arg=conversation_id)
+
+            if result and result.get('success'):
+                log(f"Deleted conversation: {conversation_id}")
+                return True
+            else:
+                log(f"Delete error: {result.get('error', 'Unknown')}")
+                return False
+
+        except Exception as e:
+            log(f"Error deleting conversation: {e}")
+            return False
