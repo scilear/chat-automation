@@ -257,6 +257,7 @@ class PerplexityConversations(BrowserAutomation):
     async def delete_conversation_via_api(self, conversation_id: str) -> bool:
         """Delete a conversation via browser fetch API"""
         try:
+            print(f"[DEBUG] Attempting to delete conversation: {conversation_id}")
             await self.ensure_connection()
 
             result = await self.page.evaluate('''async (thread_id) => {
@@ -265,14 +266,18 @@ class PerplexityConversations(BrowserAutomation):
                         "https://www.perplexity.ai/rest/thread/delete",
                         {
                             method: "POST",
-                            headers: { "Content-Type": "application/json" },
+                            headers: { 
+                                "Content-Type": "application/json",
+                                "Accept": "application/json"
+                            },
                             body: JSON.stringify({ thread_id: thread_id })
                         }
                     );
+                    const responseText = await response.text();
                     if (response.ok) {
-                        return { success: true };
+                        return { success: true, response: responseText };
                     }
-                    return { success: false, error: "HTTP " + response.status };
+                    return { success: false, error: "HTTP " + response.status + ": " + responseText };
                 } catch (e) {
                     return { success: false, error: e.message };
                 }
@@ -283,7 +288,8 @@ class PerplexityConversations(BrowserAutomation):
                 log(f"Deleted conversation: {conversation_id}")
                 return True
             else:
-                log(f"Delete error: {result.get('error', 'Unknown')}")
+                error_msg = result.get('error', 'Unknown') if result else 'No result'
+                print(f"[ERROR] Delete failed for {conversation_id}: {error_msg}")
                 return False
 
         except Exception as e:
