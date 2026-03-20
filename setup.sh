@@ -51,6 +51,16 @@ REPO="${SCRIPT_DIR}"
 VENV="${VENV_DIR}"
 
 if [ ! -d "\$VENV" ]; then
+  echo "=== Chat Automation CLI Wrapper Debug Info ===" >&2
+  echo "Current working directory: \$(pwd)" >&2
+  echo "Attempted REPO path: \$REPO" >&2
+  echo "Attempted VENV path: \$VENV" >&2
+  echo "PYTHONPATH (before export): \$PYTHONPATH" >&2
+  echo "--- ls -l \$REPO ---" >&2
+  ls -l "\$REPO" 2>&1 >&2
+  echo "--- ls -l \$VENV ---" >&2
+  ls -l "\$VENV" 2>&1 >&2
+  echo "=========================================" >&2
   echo "Missing venv at \$VENV" >&2
   echo "Run: bash \$REPO/setup.sh" >&2
   exit 1
@@ -71,6 +81,16 @@ REPO="${SCRIPT_DIR}"
 VENV="${VENV_DIR}"
 
 if [ ! -d "\$VENV" ]; then
+  echo "=== Chat Automation CLI Wrapper Debug Info ===" >&2
+  echo "Current working directory: \$(pwd)" >&2
+  echo "Attempted REPO path: \$REPO" >&2
+  echo "Attempted VENV path: \$VENV" >&2
+  echo "PYTHONPATH (before export): \$PYTHONPATH" >&2
+  echo "--- ls -l \$REPO ---" >&2
+  ls -l "\$REPO" 2>&1 >&2
+  echo "--- ls -l \$VENV ---" >&2
+  ls -l "\$VENV" 2>&1 >&2
+  echo "=========================================" >&2
   echo "Missing venv at \$VENV" >&2
   echo "Run: bash \$REPO/setup.sh" >&2
   exit 1
