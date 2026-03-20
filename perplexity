@@ -1,4 +1,4 @@
-#!/home/fabien/clawd/chat_automation/.venv/bin/python3
+#!/usr/bin/env python3
 """
 Perplexity CLI - Command-line interface for Perplexity
 """
