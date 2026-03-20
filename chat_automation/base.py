@@ -17,7 +17,7 @@ from .config import ChatAutomationConfig
 from .verbose import log
 
 CDP_STATE_FILE = Path.home() / ".chat_automation" / "browser_cdp.json"
-DAEMON_SCRIPT = Path(__file__).parent / "browser-daemon"
+DAEMON_SCRIPT = Path(__file__).parent.parent / "browser-daemon"
 CDP_PORT = 9222
 
 
