@@ -7,6 +7,39 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="$SCRIPT_DIR/.venv"
 
+# --- Fail Fast: Critical Project Structure Check ---
+MISSING=0
+
+# Check main package exists
+if [ ! -d "$SCRIPT_DIR/chat_automation" ]; then
+  echo "ERROR: Missing \'chat_automation\' package directory in project root: $SCRIPT_DIR/chat_automation" >&2
+  MISSING=1
+fi
+# Check package __init__.py
+if [ ! -f "$SCRIPT_DIR/chat_automation/__init__.py" ]; then
+  echo "ERROR: Missing \'chat_automation/__init__.py\'. All Python packages must have this file!" >&2
+  MISSING=1
+fi
+# Check both CLI runners
+for runner in chatgpt perplexity; do
+  if [ ! -f "$SCRIPT_DIR/$runner" ]; then
+    echo "ERROR: Missing CLI runner: $SCRIPT_DIR/$runner" >&2
+    MISSING=1
+  fi
+  if [ -f "$SCRIPT_DIR/$runner" ]; then
+    # Repair shebang if needed
+    head -n 1 "$SCRIPT_DIR/$runner" | grep -qF '#!/usr/bin/env python3' || \
+    (echo "WARNING: Repairing shebang for $runner"; sed -i '1c#!/usr/bin/env python3' "$SCRIPT_DIR/$runner")
+    chmod +x "$SCRIPT_DIR/$runner"
+  fi
+done
+if [ "$MISSING" -eq 1 ]; then
+  echo "SETUP FAILED: Run \'git status\' and make sure all scripts and package files are present." >&2
+  exit 1
+fi
+# --- END critical project structure check ---
+
+
 echo "========================================="
 echo "Chat Automation Setup"
 echo "========================================="
