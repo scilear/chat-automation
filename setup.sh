@@ -49,15 +49,15 @@ set -euo pipefail
 REPO="${SCRIPT_DIR}"
 VENV="${VENV_DIR}"
 
-if [ ! -d "$VENV" ]; then
-  echo "Missing venv at $VENV" >&2
-  echo "Run: bash $REPO/setup.sh" >&2
+if [ ! -d "\$VENV" ]; then
+  echo "Missing venv at \$VENV" >&2
+  echo "Run: bash \$REPO/setup.sh" >&2
   exit 1
 fi
 
 # shellcheck source=/dev/null
-source "$VENV/bin/activate"
-exec python "$REPO/chatgpt" "$@"
+source "\$VENV/bin/activate"
+exec python "\$REPO/chatgpt" "\$@"
 EOF
 
 cat > "$LOCAL_BIN/perplexity" <<EOF
@@ -67,15 +67,15 @@ set -euo pipefail
 REPO="${SCRIPT_DIR}"
 VENV="${VENV_DIR}"
 
-if [ ! -d "$VENV" ]; then
-  echo "Missing venv at $VENV" >&2
-  echo "Run: bash $REPO/setup.sh" >&2
+if [ ! -d "\$VENV" ]; then
+  echo "Missing venv at \$VENV" >&2
+  echo "Run: bash \$REPO/setup.sh" >&2
   exit 1
 fi
 
 # shellcheck source=/dev/null
-source "$VENV/bin/activate"
-exec python "$REPO/perplexity" "$@"
+source "\$VENV/bin/activate"
+exec python "\$REPO/perplexity" "\$@"
 EOF
 
 chmod +x "$LOCAL_BIN/chatgpt" "$LOCAL_BIN/perplexity"
