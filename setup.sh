@@ -38,6 +38,49 @@ echo "Installing Playwright browsers (this may take a few minutes)..."
 playwright install chromium
 
 echo ""
+echo "Installing CLI wrappers to ~/.local/bin..."
+LOCAL_BIN="$HOME/.local/bin"
+mkdir -p "$LOCAL_BIN"
+
+cat > "$LOCAL_BIN/chatgpt" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO="$SCRIPT_DIR"
+VENV="$VENV_DIR"
+
+if [ ! -d "$VENV" ]; then
+  echo "Missing venv at $VENV" >&2
+  echo "Run: bash $REPO/setup.sh" >&2
+  exit 1
+fi
+
+# shellcheck source=/dev/null
+source "$VENV/bin/activate"
+exec python "$REPO/chatgpt" "$@"
+EOF
+
+cat > "$LOCAL_BIN/perplexity" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO="$SCRIPT_DIR"
+VENV="$VENV_DIR"
+
+if [ ! -d "$VENV" ]; then
+  echo "Missing venv at $VENV" >&2
+  echo "Run: bash $REPO/setup.sh" >&2
+  exit 1
+fi
+
+# shellcheck source=/dev/null
+source "$VENV/bin/activate"
+exec python "$REPO/perplexity" "$@"
+EOF
+
+chmod +x "$LOCAL_BIN/chatgpt" "$LOCAL_BIN/perplexity"
+
+echo ""
 echo "========================================="
 echo "Setup complete!"
 echo "========================================="
@@ -48,4 +91,8 @@ echo ""
 echo "To run examples:"
 echo "  cd $SCRIPT_DIR"
 echo "  python examples/interactive_chat.py"
+echo ""
+echo "CLI wrappers installed:"
+echo "  $LOCAL_BIN/chatgpt"
+echo "  $LOCAL_BIN/perplexity"
 echo ""
