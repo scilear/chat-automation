@@ -42,6 +42,7 @@ echo "Installing CLI wrappers to ~/.local/bin..."
 LOCAL_BIN="$HOME/.local/bin"
 mkdir -p "$LOCAL_BIN"
 
+[ -e "$LOCAL_BIN/chatgpt" ] && rm -f "$LOCAL_BIN/chatgpt"
 cat > "$LOCAL_BIN/chatgpt" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -61,6 +62,7 @@ export PYTHONPATH="\$REPO\${PYTHONPATH:+:\$PYTHONPATH}"
 exec python "\$REPO/chatgpt" "\$@"
 EOF
 
+[ -e "$LOCAL_BIN/perplexity" ] && rm -f "$LOCAL_BIN/perplexity"
 cat > "$LOCAL_BIN/perplexity" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
