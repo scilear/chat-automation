@@ -5,6 +5,7 @@ Perplexity-specific automation module
 import asyncio
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+from pathlib import Path
 
 from .base import BrowserAutomation
 from .config import ChatAutomationConfig
@@ -388,3 +389,141 @@ class PerplexityAutomation(BrowserAutomation):
             await asyncio.sleep(1)
 
         return await self.get_last_response()
+
+    async def find_asset_cards(self) -> List[Dict[str, Any]]:
+        """Find all downloadable asset cards on the page
+
+        Returns list of dicts with 'element' and 'testid' keys
+        """
+        assets = []
+        selectors = [
+            '[data-testid="asset-card-open-button"]',
+            '[data-testid="asset-card"]',
+            'button[data-testid*="asset"]',
+            '.asset-card',
+        ]
+
+        for selector in selectors:
+            try:
+                elements = await self.page.query_selector_all(selector)
+                for el in elements:
+                    try:
+                        if await el.is_visible():
+                            assets.append({
+                                'element': el,
+                                'selector': selector,
+                            })
+                    except:
+                        pass
+            except:
+                pass
+
+        return assets
+
+    async def download_asset(self, download_dir: Optional[str] = None,
+                            timeout: int = 30) -> Optional[Dict[str, str]]:
+        """Download the first available asset file from Perplexity response
+
+        Args:
+            download_dir: Directory to save file (default: ~/.chat_automation/downloads)
+            timeout: Max seconds to wait for download
+
+        Returns:
+            Dict with 'filename' and 'path' keys, or None if failed
+        """
+
+        # Setup download directory
+        if download_dir:
+            save_dir = Path(download_dir)
+        else:
+            save_dir = Path.home() / ".chat_automation" / "downloads"
+        save_dir.mkdir(parents=True, exist_ok=True)
+
+        downloaded_file = None
+
+        # Setup download listener
+        async def handle_download(download):
+            nonlocal downloaded_file
+            try:
+                filename = download.suggested_filename
+                save_path = save_dir / filename
+                await download.save_as(save_path)
+                downloaded_file = {
+                    'filename': filename,
+                    'path': str(save_path),
+                    'url': download.url
+                }
+                log(f"Downloaded: {filename}")
+            except Exception as e:
+                log(f"Download error: {e}")
+
+        self.page.on("download", handle_download)
+
+        try:
+            # Find and click asset card
+            assets = await self.find_asset_cards()
+            if not assets:
+                log("No asset cards found")
+                return None
+
+            log(f"Found {len(assets)} asset(s), clicking first...")
+            await assets[0]['element'].click()
+            await asyncio.sleep(2)
+
+            # Find and click Export button
+            export_selectors = [
+                'button:has-text("Export")',
+                'button:has-text("Download")',
+                'button[data-testid*="export"]',
+            ]
+
+            export_btn = None
+            for selector in export_selectors:
+                try:
+                    btn = await self.page.query_selector(selector)
+                    if btn and await btn.is_visible():
+                        export_btn = btn
+                        break
+                except:
+                    pass
+
+            if not export_btn:
+                log("Export button not found")
+                return None
+
+            await export_btn.click()
+            await asyncio.sleep(1)
+
+            # Find and click download option
+            menu_selectors = ['[role="menuitem"]', 'div[role="menuitem"]']
+            menu_items = []
+
+            for selector in menu_selectors:
+                try:
+                    items = await self.page.query_selector_all(selector)
+                    for item in items:
+                        if await item.is_visible():
+                            text = await item.text_content() or ""
+                            if any(kw in text.lower() for kw in ['download', 'html', 'export']):
+                                menu_items.append(item)
+                except:
+                    pass
+
+            if not menu_items:
+                log("Download options not found")
+                return None
+
+            await menu_items[0].click()
+
+            # Wait for download
+            for _ in range(timeout):
+                if downloaded_file:
+                    return downloaded_file
+                await asyncio.sleep(1)
+
+            log("Download timeout")
+            return None
+
+        except Exception as e:
+            log(f"Error downloading asset: {e}")
+            return None

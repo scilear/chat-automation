@@ -36,11 +36,298 @@ HISTORY_FILE = Path.home() / ".chat_automation" / "chat_history"
 
 class ChatGPTCLI:
     def __init__(self, verbose: bool = False, quiet: bool = False):
-        self.chat = None
         self.verbose = verbose
         self.quiet = quiet
-        if verbose:
-            os.environ["CHAT_AUTOMATION_VERBOSE"] = "1"
+
+    async def export_conversation_markdown(
+        self,
+        conversation_id: str,
+        output_file: str = None,
+        group_id: str = None,
+        force_reload: bool = False,
+        log_network: bool = False,
+        use_network: bool = True,
+        dump_network_dir: str = None,
+    ):
+        """Export ChatGPT conversation as Markdown via browser automation"""
+        import asyncio
+        from pathlib import Path
+        console = Console()
+        if group_id:
+            chat_url = f"https://chatgpt.com/g/{group_id}/c/{conversation_id}"
+        else:
+            chat_url = f"https://chatgpt.com/c/{conversation_id}"
+        md_filename = output_file or f"chatgpt_conversation_{conversation_id}.md"
+        md_path = Path(md_filename).expanduser().absolute()
+        self.chat = ChatManager()
+        try:
+            await self.chat._ensure_browser()
+            await self.chat._ensure_logged_in()
+
+            if log_network or dump_network_dir:
+                dump_dir = None
+                if dump_network_dir:
+                    dump_dir = Path(dump_network_dir).expanduser().absolute()
+                    dump_dir.mkdir(parents=True, exist_ok=True)
+
+                async def _log_response(response):
+                    try:
+                        url = response.url
+                        is_interesting = (
+                            conversation_id in url
+                            or "/backend-api/conversation/" in url
+                            or "/backend-api/conversations" in url
+                        )
+                        if log_network and any(
+                            token in url for token in ["/backend-api/", "/conversation", "/conversations", "/history"]
+                        ):
+                            status = response.status
+                            console.print(f"[dim]NET {status} {url}[/dim]")
+
+                        if dump_dir and is_interesting:
+                            status = response.status
+                            if status < 200 or status >= 300:
+                                return
+                            try:
+                                body = await response.text()
+                            except Exception:
+                                body = ""
+                            max_bytes = 5 * 1024 * 1024
+                            if len(body.encode("utf-8")) > max_bytes:
+                                body = body.encode("utf-8")[:max_bytes].decode("utf-8", errors="ignore")
+                            safe_name = url.replace("https://", "").replace("/", "_").replace("?", "_")
+                            file_path = dump_dir / f"{status}_{safe_name}.txt"
+                            file_path.write_text(body, encoding="utf-8")
+                    except Exception:
+                        pass
+
+                self.chat._chatgpt.page.on("response", _log_response)
+            current_url = ""
+            try:
+                current_url = self.chat._chatgpt.page.url or ""
+            except Exception:
+                current_url = ""
+
+            if force_reload or current_url != chat_url:
+                await self.chat.open_conversation_by_url(chat_url)
+            else:
+                console.print("[dim]Already on target conversation, skipping reload[/dim]")
+            await asyncio.sleep(2)
+            await self.chat._chatgpt.wait_for_ready()
+
+            if use_network:
+                try:
+                    api_url = f"https://chatgpt.com/backend-api/conversation/{conversation_id}"
+                    device_id = await self.chat._chatgpt.page.evaluate(
+                        "() => localStorage.getItem('oai-device-id') || localStorage.getItem('oai_device_id')"
+                    )
+                    async def _fetch_via_page() -> str:
+                        return await self.chat._chatgpt.page.evaluate(
+                            "({ url, deviceId }) => fetch(url, {\n"
+                            "  credentials: 'include',\n"
+                            "  cache: 'no-store',\n"
+                            "  headers: deviceId ? { 'oai-device-id': deviceId } : {}\n"
+                            "}).then(r => r.text())",
+                            {"url": api_url, "deviceId": device_id},
+                        )
+
+                    # Always navigate to ensure conversation is in session context
+                    raw_text = None
+                    response_event = asyncio.Event()
+
+                    async def _capture_response(response):
+                        nonlocal raw_text
+                        if response.url == api_url:
+                            try:
+                                raw_text = await response.text()
+                            except Exception:
+                                raw_text = None
+                            response_event.set()
+
+                    self.chat._chatgpt.page.on("response", _capture_response)
+                    try:
+                        await self.chat.open_conversation_by_url(chat_url)
+                        await asyncio.sleep(3)
+                        await self.chat._chatgpt.wait_for_ready()
+                        try:
+                            await asyncio.wait_for(response_event.wait(), timeout=20)
+                        except Exception:
+                            pass
+                    finally:
+                        try:
+                            self.chat._chatgpt.page.off("response", _capture_response)
+                        except Exception:
+                            pass
+
+                    if raw_text is None:
+                        if log_network:
+                            console.print("[dim]No response body captured; trying direct fetch[/dim]")
+                        session_token = await self.chat._chatgpt.page.evaluate(
+                            "() => localStorage.getItem('__Secure-next-auth.session-token')"
+                        )
+                        if session_token:
+                            api_url = f"https://chatgpt.com/backend-api/conversation/{conversation_id}?access_token={session_token}"
+                        raw_text = await _fetch_via_page()
+                    try:
+                        import json as _json
+                        data = _json.loads(raw_text)
+                    except Exception:
+                        data = None
+
+                    if isinstance(data, dict) and data.get("detail"):
+                        if log_network:
+                            console.print("[dim]First fetch failed; retrying after short wait[/dim]")
+                        await asyncio.sleep(3)
+                        raw_text = await _fetch_via_page()
+
+                    try:
+                        import json as _json
+                        data = _json.loads(raw_text)
+                    except Exception as e:
+                        raise RuntimeError(f"Failed to parse API response: {e}")
+
+                    if isinstance(data, dict) and data.get("detail"):
+                        raise RuntimeError(f"Backend API error: {data.get('detail')}")
+                    if data:
+                        mapping = data.get("mapping") or {}
+                        current_node = data.get("current_node")
+
+                        def _format_timestamp(ts):
+                            try:
+                                if ts is None:
+                                    return None
+                                return datetime.fromtimestamp(float(ts)).isoformat()
+                            except Exception:
+                                return None
+
+                        def _extract_parts(parts):
+                            texts = []
+                            for part in parts:
+                                if isinstance(part, str):
+                                    texts.append(part)
+                                elif isinstance(part, dict):
+                                    part_text = part.get("text") or part.get("content")
+                                    language = part.get("language") or ""
+                                    if isinstance(part_text, str):
+                                        if language:
+                                            texts.append(f"```{language}\n{part_text}\n```")
+                                        else:
+                                            texts.append(part_text)
+                            return "\n".join(texts).strip()
+
+                        def _node_message(node):
+                            msg = node.get("message") if node else None
+                            if not msg:
+                                return None
+                            role = msg.get("author", {}).get("role")
+                            if role not in ["user", "assistant"]:
+                                return None
+                            timestamp = _format_timestamp(msg.get("create_time"))
+                            content = msg.get("content", {})
+                            parts = content.get("parts") or []
+                            text = _extract_parts(parts)
+                            if not text:
+                                return None
+                            return {"role": role, "content": text, "timestamp": timestamp}
+
+                        # Walk from current node back to root, then reverse
+                        node_ids = []
+                        node_id = current_node
+                        while node_id:
+                            node_ids.append(node_id)
+                            node = mapping.get(node_id, {})
+                            parents = node.get("parent")
+                            node_id = parents if parents else None
+
+                        node_ids.reverse()
+                        messages = []
+                        for node_id in node_ids:
+                            node = mapping.get(node_id, {})
+                            msg = _node_message(node)
+                            if msg:
+                                messages.append(msg)
+
+                        if not messages:
+                            raise RuntimeError("No messages found in backend API response")
+
+                        md_parts = []
+                        for msg in messages:
+                            role = msg["role"]
+                            timestamp = msg.get("timestamp")
+                            ts_text = f" ({timestamp})" if timestamp else ""
+                            header = f"## {role.upper()}{ts_text}"
+                            md_parts.append(f"\n{header}\n{msg['content'].strip()}\n---\n")
+                        md_export = "\n".join(md_parts)
+                        with open(md_path, "w") as f:
+                            f.write(md_export)
+                        console.print(
+                            f"[green]✓ Exported conversation '{conversation_id}' to:[/green] {md_path}"
+                        )
+                        return
+                    if log_network:
+                        console.print(f"[dim]Network error body: {raw_text[:500]}[/dim]")
+                    raise RuntimeError("Backend API request failed")
+                except Exception as e:
+                    console.print(f"[red]Network export failed:[/red] {e}")
+                    return
+
+            # Wait for conversation messages to load (up to ~60s)
+            messages_loaded = False
+            for _ in range(60):
+                user_msgs = await self.chat._chatgpt.page.query_selector_all(
+                    "[data-testid='conversation-turn:user'], [data-message-author-role='user'], .user-message, .human-message"
+                )
+                assistant_msgs = await self.chat._chatgpt.page.query_selector_all(
+                    "[data-testid='conversation-turn:assistant'], [data-message-author-role='assistant'], .assistant-message, .ai-message"
+                )
+                generic_msgs = await self.chat._chatgpt.page.query_selector_all(
+                    "[data-message-id], [data-testid^='conversation-turn'], .markdown, .prose"
+                )
+                if user_msgs or assistant_msgs or generic_msgs:
+                    messages_loaded = True
+                    break
+                await asyncio.sleep(1)
+
+            if not messages_loaded:
+                console.print("[yellow]Warning:[/yellow] No messages detected yet; export may be empty")
+            await self.chat._chatgpt.scroll_to_top()
+            await asyncio.sleep(1)
+            await self.chat._chatgpt.scroll_to_bottom()
+            await asyncio.sleep(1)
+            # Get all message blocks (user & assistant)
+            user_msgs = await self.chat._chatgpt.page.query_selector_all(
+                "[data-testid='conversation-turn:user'], [data-message-author-role='user'], .user-message, .human-message"
+            )
+            assistant_msgs = await self.chat._chatgpt.page.query_selector_all(
+                "[data-testid='conversation-turn:assistant'], [data-message-author-role='assistant'], .assistant-message, .ai-message"
+            )
+            messages = []
+            for i in range(max(len(user_msgs), len(assistant_msgs))):
+                if i < len(user_msgs):
+                    user_md = (await user_msgs[i].text_content()) or ""
+                    if user_md:
+                        messages.append({"role": "user", "content": user_md})
+                if i < len(assistant_msgs):
+                    assistant_md = (await assistant_msgs[i].text_content()) or ""
+                    if assistant_md:
+                        messages.append({"role": "assistant", "content": assistant_md})
+            # Format markdown export
+            md_parts = []
+            for msg in messages:
+                role = msg["role"]
+                header = f"## {role.upper()}"
+                md_parts.append(f"\n{header}\n{msg['content'].strip()}\n---\n")
+            md_export = "\n".join(md_parts)
+            with open(md_path, "w") as f:
+                f.write(md_export)
+            console.print(f"[green]\u2713 Exported conversation '{conversation_id}' to:[/green] {md_path}")
+        except Exception as e:
+            console.print(f"[red]Failed to export conversation:[/red] {e}")
+        finally:
+            if self.chat:
+                await self.chat.close()
+
+        self.chat = None
     
     async def login(self):
         """Login to ChatGPT and save session"""
@@ -515,16 +802,26 @@ Flags:
     continue_parser.add_argument('session_id', help='Session ID to continue')
     continue_parser.add_argument('message', nargs='?', help='Message to send')
     continue_parser.add_argument('--output', '-o', help='Write response to file (markdown format)')
-    
+
+    # Export conversation (new)
+    export_parser = subparsers.add_parser('export', help='Export conversation as markdown')
+    export_parser.add_argument('conversation_id', help='Conversation URL ID (after /c/)')
+    export_parser.add_argument('--group', '-g', help='Group/project ID for /g/<group_id>/c/<conversation_id> URLs')
+    export_parser.add_argument('--force-reload', action='store_true', help='Force reload even if already on target URL')
+    export_parser.add_argument('--log-network', action='store_true', help='Log matching network responses during export')
+    export_parser.add_argument('--no-network', action='store_true', help='Disable backend API export path')
+    export_parser.add_argument('--dump-network-dir', help='Write matching response bodies to this folder')
+    export_parser.add_argument('--output', '-o', help='Write export to file (default: chatgpt_conversation_<id>.md)')
+
     args = parser.parse_args()
-    
+
     if not args.command:
         parser.print_help()
         return
-    
+
     set_verbose(args.verbose)
     cli = ChatGPTCLI(verbose=args.verbose, quiet=args.quiet)
-    
+
     if args.command == 'login':
         asyncio.run(cli.login())
     elif args.command == 'chat':
@@ -553,6 +850,19 @@ Flags:
             asyncio.run(cli.chat_message(args.message, args.session_id, output_file))
         else:
             print("Error: Provide a message to continue")
+    elif args.command == 'export':
+        output_file = getattr(args, 'output', None)
+        asyncio.run(
+            cli.export_conversation_markdown(
+                args.conversation_id,
+                output_file,
+                args.group,
+                args.force_reload,
+                args.log_network,
+                not args.no_network,
+                args.dump_network_dir,
+            )
+        )
 
 
 if __name__ == '__main__':
