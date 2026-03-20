@@ -57,6 +57,7 @@ fi
 
 # shellcheck source=/dev/null
 source "\$VENV/bin/activate"
+export PYTHONPATH="\$REPO\${PYTHONPATH:+:\$PYTHONPATH}"
 exec python "\$REPO/chatgpt" "\$@"
 EOF
 
@@ -75,6 +76,7 @@ fi
 
 # shellcheck source=/dev/null
 source "\$VENV/bin/activate"
+export PYTHONPATH="\$REPO\${PYTHONPATH:+:\$PYTHONPATH}"
 exec python "\$REPO/perplexity" "\$@"
 EOF
 
