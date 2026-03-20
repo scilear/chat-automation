@@ -46,8 +46,8 @@ cat > "$LOCAL_BIN/chatgpt" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="$SCRIPT_DIR"
-VENV="$VENV_DIR"
+REPO="${SCRIPT_DIR}"
+VENV="${VENV_DIR}"
 
 if [ ! -d "$VENV" ]; then
   echo "Missing venv at $VENV" >&2
@@ -64,8 +64,8 @@ cat > "$LOCAL_BIN/perplexity" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="$SCRIPT_DIR"
-VENV="$VENV_DIR"
+REPO="${SCRIPT_DIR}"
+VENV="${VENV_DIR}"
 
 if [ ! -d "$VENV" ]; then
   echo "Missing venv at $VENV" >&2
