@@ -1,8 +1,3 @@
-#!/usr/bin/env bash
-"""
-ChatGPT CLI - Generic command-line interface for ChatGPT
-"""
-
 import os
 os.environ["NODE_NO_WARNINGS"] = "1"
 
@@ -11,7 +6,6 @@ import asyncio
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from chat_automation import ChatManager, SyncChatManager
 from chat_automation.verbose import set_verbose
 from chat_automation.cli_common import (
@@ -29,7 +23,7 @@ console = Console()
 SAVE_DIR = Path.home() / ".chat_automation" / "conversations"
 SAVE_DIR.mkdir(parents=True, exist_ok=True)
 
-PERSONAS_DIR = Path(__file__).parent / "chat_automation" / "personas"
+PERSONAS_DIR = Path(__file__).parent.parent / "personas"
 
 HISTORY_FILE = Path.home() / ".chat_automation" / "chat_history"
 

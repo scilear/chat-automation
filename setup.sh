@@ -28,8 +28,8 @@ for runner in chatgpt perplexity; do
   fi
   if [ -f "$SCRIPT_DIR/$runner" ]; then
     # Repair shebang if needed
-    head -n 1 "$SCRIPT_DIR/$runner" | grep -qF '#!/usr/bin/env python3' || \
-    (echo "WARNING: Repairing shebang for $runner"; sed -i '1c#!/usr/bin/env python3' "$SCRIPT_DIR/$runner")
+    head -n 1 "$SCRIPT_DIR/$runner" | grep -qF '#!/usr/bin/env bash' || \
+    (echo "WARNING: Repairing shebang for $runner"; sed -i '1c#!/usr/bin/env bash' "$SCRIPT_DIR/$runner")
     chmod +x "$SCRIPT_DIR/$runner"
   fi
 done
@@ -102,7 +102,7 @@ fi
 # shellcheck source=/dev/null
 source "\$VENV/bin/activate"
 export PYTHONPATH="\$REPO\${PYTHONPATH:+:\$PYTHONPATH}"
-exec python "\$REPO/chatgpt" "\$@"
+exec python -m chat_automation.chatgpt "\$@"
 EOF
 
 [ -e "$LOCAL_BIN/perplexity" ] && rm -f "$LOCAL_BIN/perplexity"
@@ -132,7 +132,7 @@ fi
 # shellcheck source=/dev/null
 source "\$VENV/bin/activate"
 export PYTHONPATH="\$REPO\${PYTHONPATH:+:\$PYTHONPATH}"
-exec python "\$REPO/perplexity" "\$@"
+exec python -m chat_automation.perplexity "\$@"
 EOF
 
 chmod +x "$LOCAL_BIN/chatgpt" "$LOCAL_BIN/perplexity"
