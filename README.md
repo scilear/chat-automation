@@ -65,6 +65,31 @@ asyncio.run(main())
 - **Conversation Export** - Auto-saves to JSON with full history
 - **Multiple Conversations** - Manage different chat threads
 - **Sync & Async APIs** - Use what fits your workflow
+- **Audio/Speech-to-Text Support** - Transcribe voice/audio files in the current session via ChatGPT web, with optional chat send or transcript-only mode *(see below!)*
+
+## Audio Transcription (Speech-to-Text)
+
+Upload and transcribe audio files using the browser's authenticated ChatGPT session. Both **CLI** & **interactive mode** are supported. Many formats (`mp3`, `m4a`, `aac`, `mp4`...) are converted automatically (requires ffmpeg).
+
+**Common usages:**
+
+- **Send transcribed message to chat (one-shot):**
+  ```bash
+  chatgpt chat --voice-file youraudio.m4a
+  ```
+- **Transcribe audio file only (don't send):**
+  ```bash
+  chatgpt transcribe youraudio.mp3 --output out.txt
+  ```
+- **Interactive commands:**
+  - `/voicefile path/to/file.m4a`  (transcribe and send to chat)
+  - `/transcribe path/to/audio.wav` (transcribe only, show transcript)
+
+**Supported File Types:**  `.webm`, `.mp3`, `.aac`, `.wav`, `.m4a`, `.mp4`, more via ffmpeg
+
+- Files not already in `.webm/opus` are converted (requires **ffmpeg+ffprobe**).
+- Shows error if ffmpeg is missing or conversion fails.
+- Browser session/cookies are reused for upload.
 
 ## Documentation
 
@@ -194,6 +219,7 @@ rm -f ~/.config/BraveSoftware/Brave-Automation/SingletonLock
 - **playwright** - Browser automation
 - **chromium** - Installed by setup.sh via `playwright install chromium`
 - **brave** - System browser (for persistent profile storage)
+- **ffmpeg & ffprobe** - Audio conversion for transcription (required for most formats)
 
 All dependencies are isolated in `.venv/` - no conflicts with other projects.
 

@@ -1,114 +1,20 @@
-# ChatGPT Automation Architecture
+## Voice/Audio Transcription Pipeline
 
-## Overview
+Audio files can be transcribed (speech-to-text) and fed into the chat workflow by leveraging the browser session.
 
-Lazy browser architecture that keeps ChatGPT open between conversations, with auto-restart on crash and conversation persistence.
+**How it works:**
+- Audio file is uploaded via the browser with user authentication (session cookies reused)
+- If the file is not natively supported (e.g., `.mp3`, `.wav`, etc.), it is auto-converted to `.webm`/opus using ffmpeg/ffprobe before upload
+- Speech-to-text/transcription uses OpenAI's web interface, returning the text to be sent (or just shown, if using `transcribe`)
+- Works identically for both CLI commands and interactive terminal sessions
 
-## Key Components
+**Requirements:** ffmpeg and ffprobe must be installed and on the system PATH.
 
-### 1. **ChatManager** (Async)
-Main class for managing persistent browser sessions.
+**Flow:**
+1. CLI parses `--voice-file`/`transcribe` commands
+2. Input file checked/converted to .webm as needed
+3. Browser automation uploads the file to ChatGPT (authenticated)
+4. Transcript is extracted from the web page
+5. Transcript is either sent as a message or shown directly (per user command)
 
-**Features:**
-- Lazy initialization (browser starts on first `send()`)
-- Keeps browser open between calls
-- Auto-restart if browser crashes
-- Auto-saves conversations to JSON
-- Handles login prompts
-
-**Usage:**
-```python
-from chat_automation import ChatManager
-
-chat = ChatManager()
-
-# Browser starts automatically on first send
-response = await chat.send("Hello!")
-
-# Continue conversation (browser stays open)
-response2 = await chat.send("Tell me more")
-
-# Export conversation
-filepath = await chat.export_conversation("chat.json")
-
-# Close when done
-await chat.close()
-```
-
-### 2. **SyncChatManager** (Sync)
-Synchronous wrapper for simpler usage in notebooks/scripts.
-
-**Usage:**
-```python
-from chat_automation import SyncChatManager
-
-with SyncChatManager() as chat:
-    response = chat.send("Hello!")
-    print(response)
-```
-
-### 3. **Persistent Profile**
-Uses `ChatAutomationConfig.brave_automation()` which saves:
-- Login cookies (so you don't log in every time)
-- ChatGPT preferences
-- Session state
-
-Profile location: `~/.config/BraveSoftware/Brave-Automation/`
-
-### 4. **Conversation Storage**
-Auto-saves to: `~/.chat_automation/conversations/`
-
-Each conversation saved as JSON with:
-- ID, title, timestamps
-- Full message history
-- Export/import support
-
-## File Structure
-
-```
-chat_automation/
-├── __init__.py          # Exports all classes
-├── base.py             # BrowserAutomation base class
-├── chatgpt.py          # ChatGPTAutomation (low-level)
-├── manager.py          # ChatManager & SyncChatManager (high-level)
-├── config.py           # Configuration classes
-├── conversation.py     # Conversation utilities
-└── examples/
-    ├── interactive_chat.py   # Manager example
-    └── ...
-```
-
-## API Levels
-
-### Low-Level (Direct browser control)
-```python
-from chat_automation import ChatGPTAutomation, ChatAutomationConfig
-
-config = ChatAutomationConfig.brave_automation()
-async with ChatGPTAutomation(config) as chatgpt:
-    await chatgpt.goto("https://chatgpt.com")
-    response = await chatgpt.chat("Hello")
-```
-
-### High-Level (Managed sessions)
-```python
-from chat_automation import ChatManager
-
-chat = ChatManager()
-response = await chat.send("Hello")  # Browser auto-starts
-```
-
-## Error Handling
-
-- **Browser crashes**: Auto-restarts on next send()
-- **Login required**: Prompts user with 60s timeout
-- **Detached elements**: Uses page-level fill (more robust)
-- **Send button**: Retries 3 times before failing
-
-## Next Steps / Improvements
-
-1. **Rate limiting**: Add delays between messages
-2. **Claude/Deepseek**: Add other chat providers
-3. **Image support**: Handle file uploads
-4. **Multi-conversation**: Manage multiple threads
-5. **API server**: Optional FastAPI wrapper
+See `chatgpt chat --voice-file ...` and `/voicefile ...` examples in the README and USAGE guides for details.

@@ -16,6 +16,7 @@ from .config import ChatAutomationConfig
 @dataclass
 class Message:
     """Represents a chat message"""
+
     role: str
     content: str
     timestamp: Optional[str] = None
@@ -28,6 +29,7 @@ class Message:
 @dataclass
 class Conversation:
     """Represents a conversation"""
+
     id: str
     title: str
     messages: List[Message]
@@ -40,20 +42,27 @@ class Conversation:
             "title": self.title,
             "messages": [asdict(m) for m in self.messages],
             "created_at": self.created_at,
-            "updated_at": self.updated_at
+            "updated_at": self.updated_at,
         }
 
     def to_markdown(self) -> str:
         lines = [f"# {self.title}\n", f"*Created: {self.created_at}*\n\n"]
         for msg in self.messages:
-            lines.append(f"**{msg.role.upper()}:** {msg.content}\n\n")
+            timestamp_str = ""
+            if msg.timestamp:
+                formatted_time = format_timestamp(msg.timestamp)
+                if formatted_time:
+                    timestamp_str = f" ({formatted_time})"
+            lines.append(f"**{msg.role.upper()}{timestamp_str}:** {msg.content}\n\n")
         return "".join(lines)
 
 
 class ConversationManager:
     """Manages chat conversations"""
 
-    def __init__(self, automation: ChatGPTAutomation, storage_dir: str = "./conversations"):
+    def __init__(
+        self, automation: ChatGPTAutomation, storage_dir: str = "./conversations"
+    ):
         self.automation = automation
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
@@ -66,7 +75,7 @@ class ConversationManager:
             title="ChatGPT Conversation",
             messages=[Message(**msg) for msg in messages],
             created_at=datetime.now().isoformat(),
-            updated_at=datetime.now().isoformat()
+            updated_at=datetime.now().isoformat(),
         )
 
         if not filename:
@@ -100,11 +109,15 @@ class ConversationManager:
             f"- User messages: {len(user_msgs)}",
             f"- Assistant responses: {len(assistant_msgs)}",
             "",
-            "**Recent topics:**"
+            "**Recent topics:**",
         ]
 
         for msg in user_msgs[-5:]:
-            preview = msg["content"][:100] + "..." if len(msg["content"]) > 100 else msg["content"]
+            preview = (
+                msg["content"][:100] + "..."
+                if len(msg["content"]) > 100
+                else msg["content"]
+            )
             summary.append(f"- {preview}")
 
         return "\n".join(summary)
@@ -128,7 +141,7 @@ class ConversationManager:
                 title=conv["title"],
                 messages=[Message(**msg) for msg in messages],
                 created_at=conv.get("date", datetime.now().isoformat()),
-                updated_at=datetime.now().isoformat()
+                updated_at=datetime.now().isoformat(),
             )
 
             with open(filepath, "w") as f:
