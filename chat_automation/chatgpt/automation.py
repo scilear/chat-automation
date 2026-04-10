@@ -3,8 +3,10 @@ ChatGPT-specific automation module
 """
 
 import asyncio
+import base64
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+from pathlib import Path
 
 from ..base import BrowserAutomation
 from ..config import ChatAutomationConfig
@@ -191,8 +193,12 @@ class ChatGPTAutomation(BrowserAutomation):
             # Find the attach file button
             attach_selectors = [
                 'button[data-testid="attach-file-button"]',
+                'button[data-testid*="attach"]',
+                'button[data-testid*="upload"]',
                 'button[aria-label*="Attach"]',
                 'button[aria-label*="Attach file"]',
+                'button[aria-label*="Upload"]',
+                'button[aria-label*="Add"]',
                 'button svg[class*="attach"]',
                 'button svg[class*="paperclip"]',
                 'button:has(svg[class*="attach"])',
@@ -235,39 +241,189 @@ class ChatGPTAutomation(BrowserAutomation):
                 else:
                     log("No file input found")
                     return False
-            
-            # Click attach button
-            await attach_btn.click()
-            log("Clicked attach button")
-            await asyncio.sleep(1)
-            
+
+            file_chooser_handled = False
+            try:
+                async with self.page.expect_file_chooser(timeout=3000) as chooser_info:
+                    await attach_btn.click()
+                file_chooser = await chooser_info.value
+                await file_chooser.set_files(filepath)
+                file_chooser_handled = True
+                log("Selected file via file chooser")
+            except Exception:
+                # Fall back to clicking the button and finding the input directly.
+                await attach_btn.click()
+                log("Clicked attach button")
+                await asyncio.sleep(1)
+
             # Find file input that should now be visible
-            file_input = await self.page.query_selector('input[type="file"]')
-            if file_input:
-                await file_input.set_input_files(filepath)
-                log(f"Attached file: {filepath}")
-                
-                # Wait for upload
-                await asyncio.sleep(2)
-                
-                # Send message if provided
-                if message:
-                    await self.send_message(message)
+            if not file_chooser_handled:
+                file_input = await self.page.query_selector('input[type="file"]')
+                if file_input:
+                    await file_input.set_input_files(filepath)
+                    log(f"Attached file: {filepath}")
                 else:
-                    # Click send
-                    send_btn = await self.find_send_button()
-                    if send_btn:
-                        await send_btn.click()
-                        log("Sent file")
-                
-                return True
+                    log("File input not found after clicking attach")
+                    return False
             else:
-                log("File input not found after clicking attach")
-                return False
+                log(f"Attached file: {filepath}")
+
+            # Wait for upload
+            await asyncio.sleep(2)
+
+            # Send message if provided
+            if message:
+                await self.send_message(message)
+            else:
+                # Click send
+                send_btn = await self.find_send_button()
+                if send_btn:
+                    await send_btn.click()
+                    log("Sent file")
+
+            return True
                 
         except Exception as e:
             log(f"Error attaching file: {e}")
             return False
+
+    async def transcribe_audio_webm(self, filepath: str, duration_ms: Optional[float] = None) -> str:
+        """Transcribe audio using ChatGPT web app backend endpoint.
+
+        Expects a webm/opus file and an active authenticated browser session.
+        """
+        path = Path(filepath).expanduser().resolve()
+        if not path.exists():
+            raise FileNotFoundError(f"Audio file not found: {path}")
+
+        audio_bytes = path.read_bytes()
+        if not audio_bytes:
+            raise RuntimeError("Audio file is empty")
+
+        device_id = await self.page.evaluate(
+            "() => localStorage.getItem('oai-device-id') || localStorage.getItem('oai_device_id') || ''"
+        )
+
+        multipart = {
+            "file": {
+                "name": path.name,
+                "mimeType": "audio/webm;codecs=opus",
+                "buffer": audio_bytes,
+            }
+        }
+        if duration_ms and duration_ms > 0:
+            multipart["duration_ms"] = str(duration_ms)
+
+        headers = {
+            "accept": "*/*",
+            "x-openai-target-path": "/backend-api/transcribe",
+            "x-openai-target-route": "/backend-api/transcribe",
+        }
+        if device_id:
+            headers["oai-device-id"] = str(device_id)
+
+        audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
+        result = await self.page.evaluate(
+            """async ({ audioB64, filename, durationMs, headers }) => {
+                const toBytes = (b64) => {
+                    const binary = atob(b64)
+                    const bytes = new Uint8Array(binary.length)
+                    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i)
+                    return bytes
+                }
+
+                const mergedHeaders = { ...headers }
+                const sessionId =
+                    sessionStorage.getItem("oai-session-id") ||
+                    localStorage.getItem("oai-session-id") ||
+                    localStorage.getItem("oai_session_id") ||
+                    ""
+                if (sessionId) mergedHeaders["oai-session-id"] = sessionId
+
+                let authToken = ""
+                try {
+                    const sessionResp = await fetch("/api/auth/session", {
+                        method: "GET",
+                        credentials: "include",
+                    })
+                    if (sessionResp.ok) {
+                        const sessionPayload = await sessionResp.json()
+                        if (sessionPayload && typeof sessionPayload.accessToken === "string") {
+                            authToken = sessionPayload.accessToken
+                        }
+                    }
+                } catch (e) {
+                }
+
+                if (authToken) {
+                    mergedHeaders["authorization"] = `Bearer ${authToken}`
+                }
+
+                const blob = new Blob([toBytes(audioB64)], { type: "audio/webm;codecs=opus" })
+                const form = new FormData()
+                form.append("file", blob, filename)
+                if (durationMs && durationMs > 0) form.append("duration_ms", String(durationMs))
+
+                const resp = await fetch("/backend-api/transcribe", {
+                    method: "POST",
+                    credentials: "include",
+                    headers: mergedHeaders,
+                    body: form,
+                })
+                const text = await resp.text()
+                return {
+                    ok: resp.ok,
+                    status: resp.status,
+                    bodyText: text,
+                    hadAuth: Boolean(authToken),
+                }
+            }""",
+            {
+                "audioB64": audio_b64,
+                "filename": path.name,
+                "durationMs": duration_ms,
+                "headers": headers,
+            },
+        )
+
+        if not isinstance(result, dict):
+            raise RuntimeError("Unexpected transcribe evaluate result")
+
+        body_text = str(result.get("bodyText", ""))
+        status = result.get("status")
+        if not result.get("ok"):
+            had_auth = result.get("hadAuth")
+            raise RuntimeError(
+                f"Transcribe request failed ({status}): {body_text[:400]} | had_auth={had_auth}"
+            )
+
+        try:
+            import json
+            payload = json.loads(body_text)
+        except Exception:
+            raise RuntimeError(f"Unexpected transcribe response: {body_text[:500]}")
+
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"Unexpected transcribe payload type: {type(payload).__name__}")
+
+        transcript = payload.get("text") or payload.get("transcript") or payload.get("content") or ""
+
+        if not transcript and isinstance(payload.get("segments"), list):
+            pieces = []
+            for segment in payload["segments"]:
+                if isinstance(segment, dict):
+                    piece = segment.get("text")
+                    if isinstance(piece, str) and piece.strip():
+                        pieces.append(piece.strip())
+            transcript = " ".join(pieces)
+
+        if isinstance(transcript, str) and transcript.strip():
+            return transcript.strip()
+
+        if payload.get("error"):
+            raise RuntimeError(f"Transcribe error: {payload.get('error')}")
+
+        raise RuntimeError(f"No transcript text in response: {str(payload)[:500]}")
 
     async def wait_for_response(self, timeout: int = 120000) -> bool:
         """Wait for ChatGPT to finish generating response and input to be ready"""

@@ -3,6 +3,7 @@ os.environ["NODE_NO_WARNINGS"] = "1"
 
 import argparse
 import asyncio
+import os
 import sys
 from pathlib import Path
 from typing import List
@@ -183,11 +184,15 @@ class PerplexityManager:
         try:
             success = await self._perplexity.attach_file(filepath, message)
             if not success:
-                with open(filepath, 'r') as f:
-                    content = f.read()
-                if len(content) > 5000:
-                    content = content[:5000] + "\n\n[...truncated...]"
-                response = await self._perplexity.chat(f"Please analyze this:\n\n```\n{content}\n```", wait_for_response=True)
+                suffix = Path(filepath).suffix.lower()
+                if suffix in {".txt", ".md", ".json", ".csv", ".py", ".yml", ".yaml", ".log"}:
+                    with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
+                        content = f.read()
+                    if len(content) > 5000:
+                        content = content[:5000] + "\n\n[...truncated...]"
+                    response = await self._perplexity.chat(f"Please analyze this:\n\n```\n{content}\n```", wait_for_response=True)
+                else:
+                    return f"Error: file upload failed for binary file {filepath}"
             else:
                 await self._perplexity.wait_for_response()
                 response = await self._perplexity.get_last_response()
