@@ -20,6 +20,7 @@ from pathlib import Path
 PID_FILE = Path.home() / ".chat_automation" / "browser_daemon.pid"
 CDP_FILE = Path.home() / ".chat_automation" / "browser_cdp.json"
 
+
 def get_pid():
     """Get daemon PID if running"""
     if PID_FILE.exists():
@@ -30,6 +31,7 @@ def get_pid():
             pass
     return None
 
+
 def is_running(pid):
     """Check if process is running"""
     try:
@@ -38,19 +40,72 @@ def is_running(pid):
     except (OSError, TypeError):
         return False
 
+
+def is_cdp_responding():
+    """Check if CDP port is responding"""
+    try:
+        import urllib.request
+
+        req = urllib.request.Request(f"http://127.0.0.1:{CDP_PORT}/json")
+        urllib.request.urlopen(req, timeout=2)
+        return True
+    except:
+        return False
+
+
+def cleanup_stale_daemon():
+    """Detect and kill stale daemon process"""
+    pid = get_pid()
+    if not pid:
+        return False
+
+    # Check if process exists
+    if not is_running(pid):
+        print("Cleaning up stale PID file...")
+        PID_FILE.unlink(missing_ok=True)
+        CDP_FILE.unlink(missing_ok=True)
+        return False
+
+    # Check if CDP is responding
+    if is_cdp_responding():
+        return True  # Daemon is healthy
+
+    # Stale process - kill it
+    print(f"Found stale daemon process (PID: {pid})")
+    print("Killing stale process...")
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except:
+        pass
+
+    # Wait briefly then force kill if still running
+    import time
+
+    time.sleep(1)
+    if is_running(pid):
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except:
+            pass
+
+    # Clean up files
+    PID_FILE.unlink(missing_ok=True)
+    CDP_FILE.unlink(missing_ok=True)
+    return False
+
+
 async def start_daemon():
     """Start browser daemon"""
-    # Check if already running
-    pid = get_pid()
-    if pid and is_running(pid):
+    # Check for stale processes first
+    if cleanup_stale_daemon():
         print("Browser daemon already running")
         return
-    
+
     print("Starting browser daemon...")
     print("(This will keep browser running for fast CLI access)")
-    
+
     # Start in background
-    script = '''
+    script = """
 import asyncio
 import sys
 sys.path.insert(0, '/home/fabien/clawd')
@@ -83,33 +138,34 @@ try:
     asyncio.run(main())
 except KeyboardInterrupt:
     print("\\nStopping daemon...")
-'''
-    
+"""
+
     # Write temporary script
     script_file = Path.home() / ".chat_automation" / "daemon_runner.py"
-    with open(script_file, 'w') as f:
+    with open(script_file, "w") as f:
         f.write(script)
-    
+
     # Run in background
     proc = subprocess.Popen(
         [sys.executable, str(script_file)],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        start_new_session=True
+        start_new_session=True,
     )
-    
+
     # Wait a moment for it to start
     await asyncio.sleep(3)
-    
+
     # Check if it started
     pid = get_pid()
     if pid and is_running(pid):
         print("✓ Daemon started successfully")
         print(f"PID: {pid}")
         print("\nNow you can use:")
-        print("  ./chatgpt chat \"Your message\"  (fast!)")
+        print('  ./chatgpt chat "Your message"  (fast!)')
     else:
         print("✗ Failed to start daemon")
+
 
 def stop_daemon():
     """Stop browser daemon"""
@@ -117,12 +173,12 @@ def stop_daemon():
     if not pid:
         print("Daemon not running")
         return
-    
+
     if not is_running(pid):
         print("Daemon not running (stale PID file)")
         PID_FILE.unlink(missing_ok=True)
         return
-    
+
     print(f"Stopping daemon (PID: {pid})...")
     try:
         os.kill(pid, signal.SIGTERM)
@@ -130,6 +186,7 @@ def stop_daemon():
         print("✓ Daemon stopped")
     except Exception as e:
         print(f"✗ Error stopping daemon: {e}")
+
 
 def check_status():
     """Check daemon status"""
@@ -143,6 +200,7 @@ def check_status():
         print("\nStart it with:")
         print("  python browser_daemon.py start")
 
+
 def main():
     if len(sys.argv) < 2:
         print("Usage:")
@@ -150,9 +208,9 @@ def main():
         print("  python browser_daemon.py stop")
         print("  python browser_daemon.py status")
         sys.exit(1)
-    
+
     command = sys.argv[1].lower()
-    
+
     if command == "start":
         asyncio.run(start_daemon())
     elif command == "stop":
@@ -162,6 +220,7 @@ def main():
     else:
         print(f"Unknown command: {command}")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
