@@ -5,6 +5,7 @@ os.environ["NODE_NO_WARNINGS"] = "1"
 import argparse
 import asyncio
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from chat_automation import ChatManager, SyncChatManager
@@ -216,7 +217,8 @@ class ChatGPTCLI:
                             try:
                                 if ts is None:
                                     return None
-                                return datetime.fromtimestamp(float(ts)).isoformat()
+                                dt = datetime.fromtimestamp(float(ts))  # type: ignore
+                                return dt.strftime("%b %d, %Y, %I:%M %p")
                             except Exception:
                                 return None
 
