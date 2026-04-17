@@ -34,7 +34,9 @@ class BrowserAutomation(ABC):
     def _is_cdp_running(self) -> bool:
         """Check if CDP endpoint is responding"""
         try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{CDP_PORT}/json", timeout=2) as response:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{CDP_PORT}/json", timeout=2
+            ) as response:
                 return response.status == 200
         except:
             return False
@@ -42,20 +44,20 @@ class BrowserAutomation(ABC):
     async def _start_daemon(self) -> bool:
         """Auto-start the browser daemon"""
         log("Browser daemon not running, auto-starting...")
-        
+
         daemon_path = str(DAEMON_SCRIPT)
         if not os.path.exists(daemon_path):
             log(f"Daemon script not found: {daemon_path}")
             return False
-        
+
         # Use setsid to create new session so daemon survives parent exit
         subprocess.Popen(
-            ['setsid', daemon_path, "start"],
+            ["setsid", daemon_path, "start"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
-        
+
         # Wait for daemon to be ready (up to 30 seconds)
         log("Waiting for daemon to start...")
         for i in range(30):
@@ -63,24 +65,40 @@ class BrowserAutomation(ABC):
             if self._is_cdp_running():
                 log("Daemon is ready")
                 return True
-        
+
         log("Daemon failed to start")
         return False
 
     async def start(self) -> None:
-        """Start browser - connect to daemon via CDP, auto-start if needed"""
+        """Start browser - connect to daemon via CDP, auto-start if needed. Includes retry/stop fallback."""
         self.playwright = await async_playwright().start()
 
         # Check if daemon is running
         if not self._is_cdp_running():
-            # Auto-start daemon
-            if not await self._start_daemon():
-                raise RuntimeError("Failed to start browser daemon")
+            # First attempt to auto-start daemon
+            started = await self._start_daemon()
+            if not started:
+                log(
+                    "First attempt to start daemon failed. Attempting to stop any existing daemon and retry..."
+                )
+                daemon_path = str(DAEMON_SCRIPT)
+                if os.path.exists(daemon_path):
+                    subprocess.run([daemon_path, "stop"], capture_output=True)
+                # Wait briefly to ensure shutdown
+                await asyncio.sleep(3)
+                # Retry
+                started = await self._start_daemon()
+                if not started:
+                    raise RuntimeError(
+                        "Failed to start browser daemon after attempting recovery. "
+                        "Please check for leftover browser or daemon processes, or try rebooting your system.\n"
+                        "If the problem persists, run 'browser-daemon stop' manually and check logs for errors."
+                    )
 
         # Connect via CDP
         log("Connecting to browser via CDP...")
         cdp_url = f"http://127.0.0.1:{CDP_PORT}"
-        
+
         try:
             self.browser = await self.playwright.chromium.connect_over_cdp(cdp_url)
 
@@ -96,11 +114,11 @@ class BrowserAutomation(ABC):
 
             # Save CDP endpoint
             CDP_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-            with open(CDP_STATE_FILE, 'w') as f:
-                json.dump({'ws_endpoint': f"ws://127.0.0.1:{CDP_PORT}"}, f)
+            with open(CDP_STATE_FILE, "w") as f:
+                json.dump({"ws_endpoint": f"ws://127.0.0.1:{CDP_PORT}"}, f)
 
             log("Connected to browser daemon")
-            
+
         except Exception as e:
             log(f"Failed to connect via CDP: {e}")
             raise
@@ -130,25 +148,29 @@ class BrowserAutomation(ABC):
         """Actually close the browser daemon"""
         # Stop connection first
         await self.stop()
-        
+
         # Stop the daemon
         daemon_path = str(DAEMON_SCRIPT)
         if os.path.exists(daemon_path):
             subprocess.run([daemon_path, "stop"], capture_output=True)
-        
+
         # Clear CDP state
         if CDP_STATE_FILE.exists():
             CDP_STATE_FILE.unlink()
-        
+
         log("Browser daemon stopped")
 
     async def goto(self, url: str) -> None:
         """Navigate to URL"""
         await self.page.goto(url)
 
-    async def wait_for_selector(self, selector: str, timeout: Optional[int] = None) -> None:
+    async def wait_for_selector(
+        self, selector: str, timeout: Optional[int] = None
+    ) -> None:
         """Wait for element to appear"""
-        await self.page.wait_for_selector(selector, timeout=timeout or self.config.timeout)
+        await self.page.wait_for_selector(
+            selector, timeout=timeout or self.config.timeout
+        )
 
     async def click(self, selector: str) -> None:
         """Click an element"""
