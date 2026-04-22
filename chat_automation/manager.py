@@ -103,29 +103,35 @@ PID_FILE = Path.home() / ".chat_automation" / "browser_daemon.pid"
 
 async def main():
     config = ChatAutomationConfig.brave_automation()
-    
-    # Actually launch a browser with CDP
+    # Decide headless mode: force with CHAT_AUTOMATION_HEADLESS=1, default to headless if no DISPLAY.
+    headless_env = os.environ.get("CHAT_AUTOMATION_HEADLESS", None)
+    if headless_env is not None:
+        headless = bool(int(headless_env))
+    else:
+        headless = os.environ.get("DISPLAY") is None
+
     from playwright.async_api import async_playwright
     pw = await async_playwright().start()
     browser = await pw.chromium.launch_persistent_context(
         user_data_dir=config.user_data_dir,
-        headless=False,
+        headless=headless,
         viewport={"width": 1280, "height": 800},
         args=[
             "--disable-blink-features=AutomationControlled",
             "--remote-debugging-port=9222",
         ]
     )
-    
+
     page = browser.pages[0] if browser.pages else await browser.new_page()
     await page.goto("https://chatgpt.com")
-    
+
     PID_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(PID_FILE, 'w') as f:
         f.write(str(os.getpid()))
-    
+
     print("Browser daemon started on port 9222")
-    
+    print(f"Headless: {headless}")
+
     while True:
         await asyncio.sleep(60)
 

@@ -18,6 +18,15 @@ pip install prompt_toolkit 2>/dev/null || pip3 install prompt_toolkit 2>/dev/nul
 echo "🌐 Installing Playwright browsers..."
 python -m playwright install chromium 2>/dev/null || python3 -m playwright install chromium 2>/dev/null || true
 
+# Verify Chromium is installed
+CHROMIUM_PATH=$(find "$HOME/.cache/ms-playwright" -name "chrome" -type f 2>/dev/null | head -1)
+if [ -z "$CHROMIUM_PATH" ] || [ ! -f "$CHROMIUM_PATH" ]; then
+    echo "ERROR: Chromium browser not found after install!" >&2
+    echo "Please run: python -m playwright install chromium" >&2
+    exit 1
+fi
+echo "✅ Chromium installed at: $CHROMIUM_PATH"
+
 echo ""
 echo "✅ Dependencies installed!"
 echo ""

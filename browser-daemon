@@ -63,12 +63,20 @@ async def run_daemon():
         
         # Launch browser with CDP
         user_data_dir = Path.home() / ".config/BraveSoftware/Brave-Automation"
-        print(f"Daemon: Launching browser...", flush=True)
+        
+        # Headless detection: default to headless if no DISPLAY, unless CHAT_AUTOMATION_HEADLESS=0
+        headless_env = os.environ.get("CHAT_AUTOMATION_HEADLESS")
+        if headless_env is not None:
+            headless = bool(int(headless_env))
+        else:
+            headless = os.environ.get("DISPLAY") is None
+        
+        print(f"Daemon: Launching browser (headless={headless})...", flush=True)
         
         browser = await asyncio.wait_for(
             playwright.chromium.launch_persistent_context(
                 user_data_dir=str(user_data_dir),
-                headless=False,
+                headless=headless,
                 viewport={"width": 1280, "height": 800},
                 args=[
                     "--disable-blink-features=AutomationControlled",

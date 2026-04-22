@@ -68,7 +68,20 @@ pip install -r "$SCRIPT_DIR/requirements.txt"
 # Install Playwright browsers
 echo ""
 echo "Installing Playwright browsers (this may take a few minutes)..."
-playwright install chromium
+playwright install chromium || python -m playwright install chromium
+
+# Verify Chromium is installed
+CHROMIUM_PATH="$HOME/.cache/ms-playwright/chromium-1208/chrome-linux64/chrome"
+if [ ! -f "$CHROMIUM_PATH" ]; then
+    # Try alternative paths (playwright version may differ)
+    CHROMIUM_PATH=$(find "$HOME/.cache/ms-playwright" -name "chrome" -type f 2>/dev/null | head -1)
+fi
+if [ -z "$CHROMIUM_PATH" ] || [ ! -f "$CHROMIUM_PATH" ]; then
+    echo "ERROR: Chromium browser not found after install!" >&2
+    echo "Please run: python -m playwright install chromium" >&2
+    exit 1
+fi
+echo "Chromium installed at: $CHROMIUM_PATH"
 
 echo ""
 echo "Installing CLI wrappers to ~/.local/bin..."
