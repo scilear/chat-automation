@@ -73,25 +73,34 @@ async def run_daemon():
         
         print(f"Daemon: Launching browser (headless={headless})...", flush=True)
         
+        # Stealth args to avoid bot detection
+        stealth_args = [
+            "--disable-blink-features=AutomationControlled",
+            "--disable-automation",
+            "--disable-dev-shm-usage",
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-web-security",
+            f"--remote-debugging-port={CDP_PORT}",
+            "--disable-gpu",
+        ]
+        
         browser = await asyncio.wait_for(
             playwright.chromium.launch_persistent_context(
                 user_data_dir=str(user_data_dir),
                 headless=headless,
                 viewport={"width": 1280, "height": 800},
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    "--disable-automation",
-                    f"--remote-debugging-port={CDP_PORT}",
-                    "--no-sandbox",
-                ],
+                args=stealth_args,
             ),
             timeout=30
         )
         
         print("Daemon: Browser launched successfully!", flush=True)
         
-        # Get the page
+        # Get the page and navigate to ChatGPT
         page = browser.pages[0] if browser.pages else await browser.new_page()
+        print("Daemon: Navigating to chatgpt.com...", flush=True)
+        await page.goto("https://chatgpt.com", wait_until="domcontentloaded", timeout=30000)
         
         # Save CDP endpoint
         cdp_endpoint = f"http://127.0.0.1:{CDP_PORT}"
