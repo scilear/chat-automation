@@ -431,7 +431,7 @@ class ChatGPTCLI:
                     console.print(f"[red]Session not found: {session_id}[/red]")
                     self.chat.start_conversation()
             else:
-                self.chat.start_conversation()
+                await self.chat.start_new_chat_and_conversation()
 
             full_message = actual_message
             if persona_content:

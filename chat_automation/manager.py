@@ -250,6 +250,12 @@ except KeyboardInterrupt:
         )
         return conv_id
 
+    async def start_new_chat_and_conversation(self, title: Optional[str] = None) -> str:
+        """Start a new conversation AND navigate to new chat on the page"""
+        conv_id = self.start_conversation(title)
+        await self.new_chat()
+        return conv_id
+
     async def send(self, message: str, wait_for_response: bool = True) -> str:
         """Send a message in current conversation"""
         if self._current_conversation is None:
