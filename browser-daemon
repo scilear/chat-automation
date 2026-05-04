@@ -64,12 +64,13 @@ async def run_daemon():
         # Launch browser with CDP
         user_data_dir = Path.home() / ".config/BraveSoftware/Brave-Automation"
         
-        # Headless detection: default to headless if no DISPLAY, unless CHAT_AUTOMATION_HEADLESS=0
+        # Headless detection: default to HEADED unless CHAT_AUTOMATION_HEADLESS=1
+        # Cloudflare blocks headless browsers, so headed is more reliable
         headless_env = os.environ.get("CHAT_AUTOMATION_HEADLESS")
         if headless_env is not None:
             headless = bool(int(headless_env))
         else:
-            headless = os.environ.get("DISPLAY") is None
+            headless = False  # Default to headed
         
         print(f"Daemon: Launching browser (headless={headless})...", flush=True)
         
@@ -101,6 +102,8 @@ async def run_daemon():
         page = browser.pages[0] if browser.pages else await browser.new_page()
         print("Daemon: Navigating to chatgpt.com...", flush=True)
         await page.goto("https://chatgpt.com", wait_until="domcontentloaded", timeout=30000)
+        print(f"Daemon: Page title: {await page.title()}", flush=True)
+        log(f"Navigated to: {page.url}")
         
         # Save CDP endpoint
         cdp_endpoint = f"http://127.0.0.1:{CDP_PORT}"
@@ -127,7 +130,10 @@ async def run_daemon():
             
     except Exception as e:
         log(f"Daemon error: {e}")
+        import traceback
+        log(f"Traceback: {traceback.format_exc()}")
         print(f"✗ Error: {e}")
+        print(f"  See logs: tail -f ~/.chat_automation/browser_daemon.log")
     finally:
         log("Daemon stopping...")
         if 'browser' in locals():
