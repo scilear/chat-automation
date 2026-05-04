@@ -72,6 +72,11 @@ async def run_daemon():
         else:
             headless = False  # Default to headed
         
+        # Ensure DISPLAY is set - Chrome needs it for headed mode
+        if not os.environ.get("DISPLAY"):
+            os.environ["DISPLAY"] = ":0"
+            print("Daemon: Defaulting DISPLAY=:0", flush=True)
+        
         print(f"Daemon: Launching browser (headless={headless})...", flush=True)
         
         # Stealth args to avoid bot detection
